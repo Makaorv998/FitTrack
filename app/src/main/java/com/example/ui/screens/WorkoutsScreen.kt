@@ -52,6 +52,7 @@ import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.RestTimerSettings
+import com.example.platform.TrainingPreferences
 import com.example.platform.todayDateKey
 import com.example.ui.ActiveWorkoutState
 import com.example.ui.AsyncState
@@ -74,6 +75,7 @@ import com.example.ui.screens.workouts.WorkoutProgramsView
 @Composable
 fun WorkoutsScreen(
     profile: UserProfile?,
+    trainingPreferences: TrainingPreferences = TrainingPreferences(),
     customPlans: List<WorkoutPlan>,
     customPrograms: List<WorkoutProgram>,
     sessions: List<WorkoutSessionLog>,
@@ -84,6 +86,7 @@ fun WorkoutsScreen(
     aiSubstitutionsState: AsyncState<String>,
     aiWorkoutAnalysisState: AsyncState<String>,
     onStartWorkout: (WorkoutPlan) -> Unit,
+    onSelectActiveProgram: (WorkoutProgram) -> Unit = {},
     onToggleWorkoutPause: () -> Unit,
     onSelectExerciseIndex: (Int) -> Unit,
     onLogSet: (Int, String, Int, Double, Int?) -> Unit,
@@ -158,7 +161,7 @@ fun WorkoutsScreen(
         Column(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 ScreenHeader(
-                    title = "Workouts",
+                    title = "Workout",
                     subtitle = "${dashboardMetrics.totalWorkouts} sessions • ${dashboardMetrics.totalWorkingVolumeKg.toInt()} kg working vol",
                     trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -191,14 +194,18 @@ fun WorkoutsScreen(
 
             when (selectedTab) {
                 0 -> WorkoutDashboardView(
+                    profile = profile,
+                    trainingPreferences = trainingPreferences,
                     metrics = dashboardMetrics,
                     allPlans = allPlans,
+                    customPrograms = customPrograms,
                     sessions = sessions,
                     schedules = schedules,
                     personalRecords = personalRecords,
                     trainingNotes = trainingNotes,
                     onStartWorkout = onStartWorkout,
                     onOpenBuilder = { showQuickBuilder = true },
+                    onOpenPrograms = { selectedTab = 1 },
                     onOpenCalendar = { selectedTab = 2 },
                     onOpenAiPlanner = onOpenAiWorkoutPlanner,
                     onOpenAnalytics = { selectedTab = 4 },
@@ -208,6 +215,7 @@ fun WorkoutsScreen(
 
                 1 -> WorkoutProgramsView(
                     profile = profile,
+                    trainingPreferences = trainingPreferences,
                     customPlans = customPlans,
                     customPrograms = customPrograms,
                     onStartWorkout = onStartWorkout,
@@ -224,6 +232,7 @@ fun WorkoutsScreen(
                             )
                         )
                     },
+                    onSelectActiveProgram = onSelectActiveProgram,
                     onSavePlan = onSaveWorkoutPlan,
                     onDuplicatePlan = onDuplicateWorkoutPlan,
                     onDeletePlan = onDeleteWorkoutPlan,
@@ -265,6 +274,21 @@ fun WorkoutsScreen(
             onDismiss = { showQuickBuilder = false },
             onSave = { plan ->
                 onSaveWorkoutPlan(plan)
+                showQuickBuilder = false
+            },
+            onSaveAndScheduleToday = { plan ->
+                onSaveWorkoutPlan(plan)
+                val today = todayDateKey()
+                onUpsertSchedule(
+                    WorkoutScheduleItem(
+                        id = today,
+                        dateKey = today,
+                        workoutId = plan.id.ifBlank { plan.name },
+                        workoutName = plan.name,
+                        programId = plan.programId,
+                        status = "scheduled"
+                    )
+                )
                 showQuickBuilder = false
             }
         )

@@ -653,7 +653,10 @@ fun SectionHeader(
             color = MaterialTheme.colorScheme.onBackground
         )
         if (actionLabel != null && onAction != null) {
-            TextButton(onClick = onAction) {
+            TextButton(
+                onClick = onAction,
+                modifier = Modifier.minimumInteractiveComponentSize()
+            ) {
                 Text(
                     text = actionLabel,
                     style = MaterialTheme.typography.labelLarge,

@@ -33,7 +33,6 @@ import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.SelfImprovement
-import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -59,13 +58,16 @@ import androidx.compose.ui.unit.dp
 import com.example.data.catalog.WorkoutCatalog
 import com.example.data.model.GpsActivity
 import com.example.data.model.MealLog
+import com.example.data.model.StepRecord
 import com.example.data.model.UserChallenge
 import com.example.data.model.UserProfile
 import com.example.data.model.WaterLog
 import com.example.data.model.WorkoutPlan
 import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
+import com.example.data.model.estimatedDurationMinutes
 import com.example.domain.FitnessCalculator
+import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.todayDateKey
 import com.example.ui.branding.FitTrackGeometricIllustration
 import com.example.ui.branding.FitTrackIllustrationType
@@ -79,10 +81,12 @@ import com.example.ui.components.GlassCard
 import com.example.ui.components.GradientButton
 import com.example.ui.components.SecondaryButton
 import com.example.ui.components.SectionHeader
+import com.example.ui.components.SimpleBarChart
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.HeroNumberTextStyle
 import com.example.ui.theme.LocalFitTrackColors
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -90,6 +94,7 @@ import java.util.Locale
 fun HomeScreen(
     profile: UserProfile?,
     todaySteps: Long,
+    stepRecords: List<StepRecord> = emptyList(),
     meals: List<MealLog>,
     waterLogs: List<WaterLog>,
     gpsActivities: List<GpsActivity>,
@@ -126,12 +131,27 @@ fun HomeScreen(
     val distanceKm = FitnessCalculator.calculateWalkingDistanceKm(todaySteps, profile?.heightCm ?: 175.0)
     val stepCaloriesBurned = (todaySteps * 0.04) * ((profile?.weightKg ?: 70.0) / 70.0)
     val todayWorkoutCalories = workoutSessions.filter { it.dateKey == today }.sumOf { it.caloriesBurned }
-    val totalBurnedToday = stepCaloriesBurned + todayWorkoutCalories
-    val todayGpsMinutes = gpsActivities.filter {
+    val todayGpsCalories = gpsActivities.filter {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(it.startedAtMs)) == today
-    }.sumOf { it.durationSeconds } / 60L
-    val activeMinutes = ((todaySteps / 100L) + todayGpsMinutes).toInt()
+    }.sumOf { it.caloriesBurned }
+    val totalBurnedToday = stepCaloriesBurned + todayWorkoutCalories + todayGpsCalories
     val remainingCalories = calorieGoal - todayCaloriesIn.toLong()
+
+    val weeklyCutoffKey = remember {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -6)
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+    }
+    val weeklyStepRecords = remember(stepRecords, weeklyCutoffKey) {
+        stepRecords.filter { it.dateKey >= weeklyCutoffKey }.sortedBy { it.dateKey }
+    }
+    val weeklyWorkoutCount = remember(workoutSessions, weeklyCutoffKey) {
+        workoutSessions.count { it.dateKey >= weeklyCutoffKey }
+    }
+    val weeklyTotalSteps = remember(weeklyStepRecords, todaySteps, today) {
+        val fromRecords = weeklyStepRecords.filterNot { it.dateKey == today }.sumOf { it.steps }
+        fromRecords + todaySteps
+    }
 
     val macroTargets = remember(profile, calorieGoal) {
         FitnessCalculator.calculateMacros(
@@ -161,6 +181,22 @@ fun HomeScreen(
             }
         }
     }
+    val latestSession = remember(workoutSessions) {
+        workoutSessions.maxByOrNull { it.createdAt?.seconds ?: 0L } ?: workoutSessions.firstOrNull()
+    }
+
+    val coachInsight = remember(todaySteps, stepGoal, todayCaloriesIn, calorieGoal, todayWaterMl, waterGoal, latestSession, todayProtein, macroTargets) {
+        when {
+            todaySteps < stepGoal / 2 -> "You're at $stepCompletionPct% of your step target — a brisk 15-min walk adds ~1,500 steps."
+            todayWaterMl < waterGoal / 2 -> "Hydration is at $todayWaterMl / $waterGoal ml. Log a glass of water to keep recovery on track."
+            todayProtein < macroTargets.proteinGrams * 0.6 && todayMeals.isNotEmpty() ->
+                "Protein is at ${todayProtein.toInt()}g of ${macroTargets.proteinGrams}g — prioritize lean protein in your next meal."
+            latestSession == null && upcomingPlan != null ->
+                "Start '${upcomingPlan.name}' (~${upcomingPlan.estimatedDurationMinutes()} min) to log your first training baseline."
+            else ->
+                "Strong momentum: ${totalBurnedToday.toInt()} kcal burned, ${todayCaloriesIn.toInt()} kcal consumed, $weeklyWorkoutCount sessions this week."
+        }
+    }
 
     var showNotifications by remember { mutableStateOf(false) }
     val bottomClearance = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 104.dp
@@ -171,7 +207,7 @@ fun HomeScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomClearance),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Top Personalized Header
+            // Personalized Header
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -210,7 +246,7 @@ fun HomeScreen(
                 }
             }
 
-            // 1. Daily Activity Overview Hero Ring Card
+            // 1. Daily Progress & Energy Hero Card
             item {
                 GlassCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -222,13 +258,13 @@ fun HomeScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text("Daily Activity", style = MaterialTheme.typography.titleLarge)
+                        Text("Daily Progress", style = MaterialTheme.typography.titleLarge)
                         StatusBadge(
-                            text = "$stepCompletionPct% of goal",
+                            text = "$stepCompletionPct% step goal",
                             tint = if (stepCompletionPct >= 100) ext.success else MaterialTheme.colorScheme.secondary
                         )
                     }
-                    Spacer(modifier = Modifier.height(16.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -236,8 +272,8 @@ fun HomeScreen(
                     ) {
                         AnimatedProgressRing(
                             progress = stepProgress,
-                            size = 144.dp,
-                            strokeWidth = 14.dp,
+                            size = 136.dp,
+                            strokeWidth = 13.dp,
                             primaryColor = MaterialTheme.colorScheme.primary,
                             secondaryColor = MaterialTheme.colorScheme.secondary
                         ) {
@@ -257,7 +293,7 @@ fun HomeScreen(
 
                         Column(
                             modifier = Modifier.padding(start = 16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
                         ) {
                             HeroSubStat(
                                 icon = Icons.Filled.LocalFireDepartment,
@@ -266,19 +302,25 @@ fun HomeScreen(
                                 tint = ext.warning
                             )
                             HeroSubStat(
-                                icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-                                label = "Distance",
-                                value = String.format(Locale.US, "%.2f km", distanceKm),
-                                tint = MaterialTheme.colorScheme.secondary
+                                icon = Icons.Filled.Restaurant,
+                                label = "Consumed",
+                                value = "${todayCaloriesIn.toInt()} / $calorieGoal",
+                                tint = ext.success
                             )
                             HeroSubStat(
-                                icon = Icons.Filled.Timer,
-                                label = "Active",
-                                value = "$activeMinutes min",
-                                tint = ext.success
+                                icon = Icons.Filled.WaterDrop,
+                                label = "Water",
+                                value = "$todayWaterMl / $waterGoal ml",
+                                tint = MaterialTheme.colorScheme.secondary
                             )
                         }
                     }
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Text(
+                        text = String.format(Locale.US, "Step distance: %.2f km today", distanceKm),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
 
@@ -292,7 +334,7 @@ fun HomeScreen(
                 ) {
                     QuickActionPill(
                         icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-                        label = "Start Walk",
+                        label = "Activity",
                         tint = MaterialTheme.colorScheme.secondary,
                         modifier = Modifier.testTag("quick_start_walk"),
                         onClick = onOpenActivity
@@ -337,9 +379,45 @@ fun HomeScreen(
                 }
             }
 
-            // 3. Upcoming Workout Card
+            // 3. Weekly Activity Overview
             item {
-                GlassCard(
+                FitTrackCard(modifier = Modifier.fillMaxWidth(), onClick = onOpenActivity) {
+                    SectionHeader(
+                        title = "Weekly Activity Overview",
+                        actionLabel = "Details",
+                        onAction = onOpenActivity
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Column {
+                            Text("7-Day Steps", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("$weeklyTotalSteps", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        }
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Workouts", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("$weeklyWorkoutCount sessions", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                        }
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text("GPS Distance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            val weekGpsKm = gpsActivities.take(10).sumOf { it.distanceKm }
+                            Text(String.format(Locale.US, "%.1f km", weekGpsKm), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
+                        }
+                    }
+                    if (weeklyStepRecords.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        SimpleBarChart(
+                            values = weeklyStepRecords.map { it.dateKey.takeLast(5) to it.steps.toFloat() }
+                        )
+                    }
+                }
+            }
+
+            // 4. Upcoming Workout Card
+            item {
+                FitTrackCard(
                     modifier = Modifier.fillMaxWidth(),
                     accentBorder = ext.warning.copy(alpha = 0.45f)
                 ) {
@@ -348,7 +426,7 @@ fun HomeScreen(
                         actionLabel = "All Workouts",
                         onAction = onOpenWorkouts
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     if (todaySchedule?.status == "rest") {
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
@@ -356,7 +434,7 @@ fun HomeScreen(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(48.dp)
+                                    .size(46.dp)
                                     .clip(CircleShape)
                                     .background(ext.success.copy(alpha = 0.16f)),
                                 contentAlignment = Alignment.Center
@@ -366,81 +444,106 @@ fun HomeScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 StatusBadge(text = "REST & RECOVERY DAY", tint = ext.success)
                                 Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "Scheduled active recovery today",
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Prioritize sleep, hydration, and light mobility.",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Text("Scheduled recovery today", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Text("Focus on sleep, hydration, and light mobility.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                         Spacer(modifier = Modifier.height(12.dp))
                         SecondaryButton(
                             text = "Browse Workouts Anyway",
                             onClick = onOpenWorkouts,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("home_browse_workouts_button")
+                            modifier = Modifier.fillMaxWidth().testTag("home_browse_workouts_button")
                         )
                     } else if (upcomingPlan != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                StatusBadge(
-                                    text = if (todaySchedule?.status == "completed") "COMPLETED TODAY" else if (todaySchedule != null) "SCHEDULED TODAY" else "NEXT SESSION",
-                                    tint = if (todaySchedule?.status == "completed") ext.success else MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = upcomingPlan.name,
-                                    style = MaterialTheme.typography.titleLarge,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "${upcomingPlan.exercises.size} exercises • ~${upcomingPlan.estimatedMinutes} min • ${upcomingPlan.level.replaceFirstChar { it.uppercase() }}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
+                        StatusBadge(
+                            text = if (todaySchedule?.status == "completed") "COMPLETED TODAY" else if (todaySchedule != null) "SCHEDULED TODAY" else "NEXT SESSION",
+                            tint = if (todaySchedule?.status == "completed") ext.success else MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = upcomingPlan.name,
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "${upcomingPlan.exercises.size} exercises • ~${upcomingPlan.estimatedDurationMinutes()} min • ${upcomingPlan.level.replaceFirstChar { it.uppercase() }}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                         Spacer(modifier = Modifier.height(12.dp))
                         GradientButton(
                             text = if (todaySchedule?.status == "completed") "Train Again" else "Start Workout",
                             icon = Icons.Filled.PlayArrow,
                             onClick = { onStartWorkout(upcomingPlan) },
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("home_start_upcoming_workout_button")
+                            modifier = Modifier.fillMaxWidth().testTag("home_start_upcoming_workout_button")
                         )
                     } else {
                         GradientButton(
                             text = "Choose a Workout Plan",
                             icon = Icons.Filled.FitnessCenter,
                             onClick = onOpenWorkouts,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("home_choose_workout_button")
+                            modifier = Modifier.fillMaxWidth().testTag("home_choose_workout_button")
                         )
                     }
                 }
             }
 
-            // 4. Nutrition Summary Card
+            // 5. Recent Workout Card
+            if (latestSession != null) {
+                item {
+                    FitTrackCard(modifier = Modifier.fillMaxWidth(), onClick = onOpenWorkouts) {
+                        SectionHeader(
+                            title = "Recent Workout",
+                            actionLabel = "History",
+                            onAction = onOpenWorkouts
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = latestSession.workoutName,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "${latestSession.dateKey} • ${FitnessCalculator.formatDuration(latestSession.durationSeconds)} • ${latestSession.setsCompleted} sets",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text(
+                                    text = WorkoutAnalyticsEngine.formatWeight(latestSession.totalVolumeKg),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                if (latestSession.personalRecordsHit > 0) {
+                                    Text(
+                                        text = "${latestSession.personalRecordsHit} PR(s)",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = ext.warning
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 6. Nutrition Summary Card
             item {
                 FitTrackCard(modifier = Modifier.fillMaxWidth(), onClick = onOpenNutrition) {
                     SectionHeader(
                         title = "Nutrition Summary",
-                        actionLabel = "Log Meal",
+                        actionLabel = "Diary",
                         onAction = onOpenNutrition
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -451,7 +554,7 @@ fun HomeScreen(
                             Text("${todayCaloriesIn.toInt()} kcal", style = MaterialTheme.typography.headlineMedium)
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Hydration", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text("Water", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("$todayWaterMl / $waterGoal ml", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
                         }
                         Column(horizontalAlignment = Alignment.End) {
@@ -487,80 +590,45 @@ fun HomeScreen(
                 }
             }
 
-            // 5. Fitness Goals Snapshot
-            item {
-                val goalLabel = (profile?.goal ?: "general_fitness").replace("_", " ").replaceFirstChar { it.uppercase() }
-                FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                    SectionHeader(
-                        title = "Fitness Goals",
-                        actionLabel = "Challenges",
-                        onAction = onOpenChallenges
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    StatusBadge(text = "PRIMARY GOAL: ${goalLabel.uppercase()}", tint = MaterialTheme.colorScheme.primary)
-                    Spacer(modifier = Modifier.height(12.dp))
-                    AuroraProgressBar(
-                        label = "Daily Steps Target",
-                        valueText = "$todaySteps / $stepGoal",
-                        progress = stepProgress,
-                        color = MaterialTheme.colorScheme.secondary
-                    )
-                    Spacer(modifier = Modifier.height(10.dp))
-                    AuroraProgressBar(
-                        label = "Hydration Target",
-                        valueText = "$todayWaterMl / $waterGoal ml",
-                        progress = (todayWaterMl.toFloat() / waterGoal.toFloat()).coerceIn(0f, 1f),
-                        color = ext.success
-                    )
-                    if (challenges.isNotEmpty()) {
-                        val first = challenges.first()
-                        Spacer(modifier = Modifier.height(10.dp))
-                        AuroraProgressBar(
-                            label = first.title,
-                            valueText = "${first.currentValue.toInt()} / ${first.targetValue.toInt()} ${first.unit}",
-                            progress = (first.currentValue / first.targetValue.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f),
-                            color = ext.warning
-                        )
-                    }
-                }
-            }
-
-            // 6. AI Insights Card
+            // 7. Contextual AI Coach Insights Card
             item {
                 GlassCard(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = onOpenAiCoach,
-                    accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.55f)
+                    accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.50f)
                 ) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        FitTrackGeometricIllustration(type = FitTrackIllustrationType.AI_COACH, size = 68.dp)
+                        FitTrackGeometricIllustration(type = FitTrackIllustrationType.AI_COACH, size = 64.dp)
                         Column(modifier = Modifier.weight(1f)) {
-                            StatusBadge(text = "AI INSIGHTS", tint = MaterialTheme.colorScheme.secondary)
+                            StatusBadge(text = "AI COACH INSIGHT", tint = MaterialTheme.colorScheme.secondary)
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Ready for today's briefing?",
-                                style = MaterialTheme.typography.titleLarge
-                            )
-                            Text(
-                                text = "Review workout readiness, macro gaps, or ask your AI Coach.",
+                                text = coachInsight,
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                         }
                     }
                     Spacer(modifier = Modifier.height(12.dp))
-                    GradientButton(
-                        text = "Open AI Fitness Coach",
-                        icon = Icons.Filled.AutoAwesome,
-                        onClick = onOpenAiCoach,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("home_ai_coach_chip")
-                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        GradientButton(
+                            text = "Ask AI Coach",
+                            icon = Icons.Filled.AutoAwesome,
+                            onClick = onOpenAiCoach,
+                            modifier = Modifier.weight(1f).testTag("home_ai_coach_chip")
+                        )
+                        if (challenges.isNotEmpty()) {
+                            SecondaryButton(
+                                text = "Challenges",
+                                onClick = onOpenChallenges,
+                                modifier = Modifier.weight(0.75f)
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -569,12 +637,12 @@ fun HomeScreen(
     if (showNotifications) {
         AlertDialog(
             onDismissRequest = { showNotifications = false },
-            title = { Text("Smart Reminders & Telemetry") },
+            title = { Text("Today's Summary") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("• Steps: $todaySteps / $stepGoal today ($stepCompletionPct%)")
-                    Text("• Hydration: $todayWaterMl / $waterGoal ml today")
-                    Text("• Meals logged today: ${todayMeals.size}")
+                    Text("• Steps: $todaySteps / $stepGoal ($stepCompletionPct%)")
+                    Text("• Burned: ${totalBurnedToday.toInt()} kcal • Consumed: ${todayCaloriesIn.toInt()} kcal")
+                    Text("• Hydration: $todayWaterMl / $waterGoal ml")
                     Text("• Workouts completed: ${workoutSessions.size}")
                 }
             },

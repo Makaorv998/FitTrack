@@ -8,6 +8,7 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -31,7 +32,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -46,24 +46,27 @@ import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PhotoLibrary
-import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.WaterDrop
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -91,6 +94,10 @@ import com.example.data.model.MealLog
 import com.example.data.model.UserProfile
 import com.example.data.model.WaterLog
 import com.example.domain.FitnessCalculator
+import com.example.platform.NutritionPreferences
+import com.example.platform.PlannedMealEntry
+import com.example.platform.RecentFoodEntry
+import com.example.platform.SavedRecipe
 import com.example.platform.todayDateKey
 import com.example.ui.AsyncState
 import com.example.ui.branding.FitTrackGeometricIllustration
@@ -103,14 +110,18 @@ import com.example.ui.components.AuroraProgressBar
 import com.example.ui.components.DisclaimerBanner
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ErrorBannerCard
+import com.example.ui.components.FitTrackBottomSheet
 import com.example.ui.components.FitTrackCard
 import com.example.ui.components.GlassCard
 import com.example.ui.components.GradientButton
 import com.example.ui.components.ScreenHeader
 import com.example.ui.components.SecondaryButton
 import com.example.ui.components.SectionHeader
+import com.example.ui.components.SegmentedControl
 import com.example.ui.components.SkeletonFoodList
 import com.example.ui.components.StatusBadge
+import com.example.ui.screens.nutrition.NutritionHistoryAndReportView
+import com.example.ui.screens.nutrition.NutritionRecipesAndPlanView
 import com.example.ui.theme.LocalFitTrackColors
 import com.example.ui.theme.MetricNumberTextStyle
 
@@ -121,12 +132,24 @@ fun NutritionScreen(
     meals: List<MealLog>,
     waterLogs: List<WaterLog>,
     customFoods: List<FoodItem>,
+    recentFoods: List<RecentFoodEntry> = emptyList(),
+    savedRecipes: List<SavedRecipe> = emptyList(),
+    plannedMeals: List<PlannedMealEntry> = emptyList(),
+    nutritionPreferences: NutritionPreferences = NutritionPreferences(),
     onLogFood: (FoodItem, Double, String) -> Unit,
+    onLogFoodWithDate: (FoodItem, Double, String, String) -> Unit = { f, g, mt, _ -> onLogFood(f, g, mt) },
+    onLogDirectMeal: (MealLog, String) -> Unit = { _, _ -> },
     onUpdateMealGrams: (MealLog, Double) -> Unit,
     onDeleteMeal: (String) -> Unit,
     onSaveCustomFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onAddWater: (Long) -> Unit,
+    onSaveNutritionPreferences: (NutritionPreferences) -> Unit = {},
+    onSaveRecipe: (SavedRecipe) -> Unit = {},
+    onDeleteRecipe: (String) -> Unit = {},
+    onLogRecipe: (SavedRecipe, String, Double) -> Unit = { _, _, _ -> },
+    onSavePlannedMeal: (PlannedMealEntry) -> Unit = {},
+    onDeletePlannedMeal: (String) -> Unit = {},
     onOpenAiScanner: () -> Unit,
     onOpenAiMealPlanner: () -> Unit
 ) {
@@ -154,10 +177,13 @@ fun NutritionScreen(
         )
     }
 
+    var selectedSubTab by remember { mutableIntStateOf(0) }
     var searchQuery by remember { mutableStateOf("") }
     var favoritesOnly by remember { mutableStateOf(false) }
-    var selectedMealFilter by remember { mutableStateOf("all") }
     var selectedFoodForLog by remember { mutableStateOf<FoodItem?>(null) }
+    var selectedTargetMealType by remember { mutableStateOf("lunch") }
+    var selectedTargetDateKey by remember { mutableStateOf(today) }
+    var showQuickAddSheet by remember { mutableStateOf(false) }
     var editingMeal by remember { mutableStateOf<MealLog?>(null) }
     var showCreateFoodDialog by remember { mutableStateOf(false) }
 
@@ -176,23 +202,33 @@ fun NutritionScreen(
         }
     }
 
-    val displayedTodayMeals = remember(todayMeals, selectedMealFilter) {
-        if (selectedMealFilter == "all") todayMeals
-        else todayMeals.filter { it.mealType.equals(selectedMealFilter, ignoreCase = true) }
+    val mealGroups = remember(todayMeals) {
+        val defs = listOf(
+            "breakfast" to "Breakfast",
+            "lunch" to "Lunch",
+            "dinner" to "Dinner",
+            "snack" to "Snacks"
+        )
+        defs.map { (key, title) ->
+            val groupItems = todayMeals.filter { m ->
+                if (key == "snack") {
+                    m.mealType.equals("snack", ignoreCase = true) || m.mealType.equals("snacks", ignoreCase = true)
+                } else {
+                    m.mealType.equals(key, ignoreCase = true)
+                }
+            }
+            Triple(key, title, groupItems)
+        }
     }
 
     val bottomClearance = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 104.dp
 
     AuroraAmbientBackground {
-        LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomClearance),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
-        ) {
-            item {
+        Column(modifier = Modifier.fillMaxSize()) {
+            Column(modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 10.dp)) {
                 ScreenHeader(
                     title = "Nutrition",
-                    subtitle = "${todayMeals.size} meals logged today",
+                    subtitle = "${todayMeals.size} items today • ${nutritionPreferences.dietaryStyle}",
                     trailing = {
                         StatusBadge(
                             text = if (remainingCal >= 0) "$remainingCal left" else "+${-remainingCal} over",
@@ -200,313 +236,398 @@ fun NutritionScreen(
                         )
                     }
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                SegmentedControl(
+                    options = listOf("Today", "History & Reports", "Recipes & Plan"),
+                    selectedIndex = selectedSubTab,
+                    onSelect = { selectedSubTab = it }
+                )
             }
 
-            // Calorie & Macro Hero Card
-            item {
-                GlassCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)
+            when (selectedSubTab) {
+                1 -> NutritionHistoryAndReportView(
+                    profile = profile,
+                    meals = meals,
+                    waterLogs = waterLogs,
+                    onOpenQuickAddForDate = { dk, mealType ->
+                        selectedTargetDateKey = dk
+                        selectedTargetMealType = mealType
+                        showQuickAddSheet = true
+                    },
+                    onDeleteMeal = onDeleteMeal
+                )
+
+                2 -> NutritionRecipesAndPlanView(
+                    allFoods = allFoods,
+                    savedRecipes = savedRecipes,
+                    plannedMeals = plannedMeals,
+                    nutritionPreferences = nutritionPreferences,
+                    onSaveNutritionPreferences = onSaveNutritionPreferences,
+                    onSaveRecipe = onSaveRecipe,
+                    onDeleteRecipe = onDeleteRecipe,
+                    onLogRecipe = onLogRecipe,
+                    onSavePlannedMeal = onSavePlannedMeal,
+                    onDeletePlannedMeal = onDeletePlannedMeal,
+                    onLogPlannedMealToday = { planned ->
+                        onLogDirectMeal(
+                            MealLog(
+                                dateKey = today,
+                                mealType = planned.mealType,
+                                foodName = planned.title,
+                                grams = planned.grams,
+                                calories = planned.calories,
+                                proteinG = planned.proteinG,
+                                carbsG = planned.carbsG,
+                                fatG = planned.fatG,
+                                source = "meal_plan"
+                            ),
+                            today
+                        )
+                    }
+                )
+
+                else -> LazyColumn(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .testTag("nutrition_today_list"),
+                    contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = bottomClearance),
+                    verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(16.dp)
-                    ) {
-                        AnimatedProgressRing(
-                            progress = (totalCalories / calorieGoal.toDouble()).toFloat(),
-                            size = 128.dp,
-                            strokeWidth = 12.dp,
-                            primaryColor = ext.success,
-                            secondaryColor = MaterialTheme.colorScheme.secondary
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                AnimatedCounterText(
-                                    targetValue = totalCalories.toInt(),
-                                    style = MetricNumberTextStyle,
-                                    color = MaterialTheme.colorScheme.onSurface
-                                )
-                                Text(
-                                    text = "/ $calorieGoal kcal",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        }
-
-                        Column(
-                            modifier = Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            AuroraProgressBar(
-                                label = "Protein",
-                                valueText = "${totalProtein.toInt()}/${macroTargets.proteinGrams}g",
-                                progress = totalProtein.toFloat() / macroTargets.proteinGrams.coerceAtLeast(1),
-                                color = MaterialTheme.colorScheme.primary
-                            )
-                            AuroraProgressBar(
-                                label = "Carbs",
-                                valueText = "${totalCarbs.toInt()}/${macroTargets.carbsGrams}g",
-                                progress = totalCarbs.toFloat() / macroTargets.carbsGrams.coerceAtLeast(1),
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            AuroraProgressBar(
-                                label = "Fat",
-                                valueText = "${totalFat.toInt()}/${macroTargets.fatGrams}g",
-                                progress = totalFat.toFloat() / macroTargets.fatGrams.coerceAtLeast(1),
-                                color = ext.warning
-                            )
-                            Text(
-                                text = "Fiber ${totalFiber.toInt()}g • Sugar ${totalSugar.toInt()}g",
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        GradientButton(
-                            text = "AI Scan",
-                            icon = Icons.Filled.CameraAlt,
-                            onClick = onOpenAiScanner,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_ai_food_scanner_button")
-                        )
-                        SecondaryButton(
-                            text = "AI Meal Plan",
-                            icon = Icons.Filled.AutoAwesome,
-                            onClick = onOpenAiMealPlanner,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("open_ai_meal_planner_button")
-                        )
-                    }
-                }
-            }
-
-            // Water Tracker Card
-            item {
-                ActivityCard(
-                    modifier = Modifier.fillMaxWidth(),
-                    accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(14.dp)
-                    ) {
-                        AnimatedProgressRing(
-                            progress = todayWater.toFloat() / waterGoal.toFloat(),
-                            size = 74.dp,
-                            strokeWidth = 7.dp,
-                            primaryColor = MaterialTheme.colorScheme.secondary,
-                            secondaryColor = MaterialTheme.colorScheme.primary
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.WaterDrop,
-                                contentDescription = "Water Intake",
-                                tint = MaterialTheme.colorScheme.secondary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                        }
-
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text("Hydration Tracker", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                text = "$todayWater / $waterGoal ml",
-                                style = MaterialTheme.typography.titleLarge,
-                                color = MaterialTheme.colorScheme.secondary
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                SecondaryButton(
-                                    text = "+250 ml",
-                                    onClick = { onAddWater(250L) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                                SecondaryButton(
-                                    text = "+500 ml",
-                                    onClick = { onAddWater(500L) },
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Today's Meals Section with Meal Type Filter
-            item {
-                SectionHeader(title = "Today's Meals (${todayMeals.size})")
-                Spacer(modifier = Modifier.height(6.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf(
-                        "all" to "All",
-                        "breakfast" to "Breakfast",
-                        "lunch" to "Lunch",
-                        "dinner" to "Dinner",
-                        "snack" to "Snacks"
-                    ).forEach { (key, label) ->
-                        FilterChip(
-                            selected = selectedMealFilter == key,
-                            onClick = { selectedMealFilter = key },
-                            label = { Text(label) }
-                        )
-                    }
-                }
-            }
-
-            if (displayedTodayMeals.isEmpty()) {
-                item {
-                    EmptyStateCard(
-                        icon = Icons.Filled.Restaurant,
-                        title = if (todayMeals.isEmpty()) "No meals logged today" else "No entries in ${selectedMealFilter.replaceFirstChar { it.uppercase() }}",
-                        subtitle = "Search the food catalog below or snap a meal photo with Gemini AI.",
-                        illustration = FitTrackIllustrationType.NUTRITION
-                    )
-                }
-            } else {
-                items(displayedTodayMeals, key = { it.id }) { meal ->
-                    FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                        Row(
+                    // Calorie & Macro Hero Card
+                    item {
+                        GlassCard(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.45f)
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(16.dp)
+                            ) {
+                                AnimatedProgressRing(
+                                    progress = (totalCalories / calorieGoal.toDouble()).toFloat(),
+                                    size = 124.dp,
+                                    strokeWidth = 12.dp,
+                                    primaryColor = ext.success,
+                                    secondaryColor = MaterialTheme.colorScheme.secondary
                                 ) {
-                                    StatusBadge(
-                                        text = meal.mealType.replaceFirstChar { it.uppercase() },
-                                        tint = MaterialTheme.colorScheme.secondary
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        AnimatedCounterText(
+                                            targetValue = totalCalories.toInt(),
+                                            style = MetricNumberTextStyle,
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        )
+                                        Text(
+                                            text = "/ $calorieGoal kcal",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    AuroraProgressBar(
+                                        label = "Protein",
+                                        valueText = "${totalProtein.toInt()}/${macroTargets.proteinGrams}g",
+                                        progress = totalProtein.toFloat() / macroTargets.proteinGrams.coerceAtLeast(1),
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    AuroraProgressBar(
+                                        label = "Carbs",
+                                        valueText = "${totalCarbs.toInt()}/${macroTargets.carbsGrams}g",
+                                        progress = totalCarbs.toFloat() / macroTargets.carbsGrams.coerceAtLeast(1),
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    AuroraProgressBar(
+                                        label = "Fat",
+                                        valueText = "${totalFat.toInt()}/${macroTargets.fatGrams}g",
+                                        progress = totalFat.toFloat() / macroTargets.fatGrams.coerceAtLeast(1),
+                                        color = ext.warning
                                     )
                                     Text(
-                                        text = meal.foodName,
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.SemiBold
+                                        text = "Fiber ${totalFiber.toInt()}g • Sugar ${totalSugar.toInt()}g",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                Spacer(modifier = Modifier.height(6.dp))
-                                Text(
-                                    text = "${meal.grams.toInt()}g • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                            }
+
+                            Spacer(modifier = Modifier.height(14.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                GradientButton(
+                                    text = "Quick Add",
+                                    icon = Icons.Filled.Add,
+                                    onClick = {
+                                        selectedTargetDateKey = today
+                                        selectedTargetMealType = "lunch"
+                                        showQuickAddSheet = true
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("nutrition_quick_add_button")
+                                )
+                                SecondaryButton(
+                                    text = "AI Scan",
+                                    icon = Icons.Filled.CameraAlt,
+                                    onClick = onOpenAiScanner,
+                                    modifier = Modifier
+                                        .weight(0.95f)
+                                        .testTag("open_ai_food_scanner_button")
+                                )
+                                SecondaryButton(
+                                    text = "AI Plan",
+                                    icon = Icons.Filled.AutoAwesome,
+                                    onClick = onOpenAiMealPlanner,
+                                    modifier = Modifier
+                                        .weight(0.95f)
+                                        .testTag("open_ai_meal_planner_button")
                                 )
                             }
-                            Row {
-                                IconButton(onClick = { editingMeal = meal }) {
-                                    Icon(Icons.Filled.Edit, contentDescription = "Edit quantity")
-                                }
-                                IconButton(onClick = { onDeleteMeal(meal.id) }) {
+                        }
+                    }
+
+                    // Water Tracker Card
+                    item {
+                        ActivityCard(
+                            modifier = Modifier.fillMaxWidth(),
+                            accentBorder = MaterialTheme.colorScheme.secondary.copy(alpha = 0.35f)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                            ) {
+                                AnimatedProgressRing(
+                                    progress = todayWater.toFloat() / waterGoal.toFloat(),
+                                    size = 74.dp,
+                                    strokeWidth = 7.dp,
+                                    primaryColor = MaterialTheme.colorScheme.secondary,
+                                    secondaryColor = MaterialTheme.colorScheme.primary
+                                ) {
                                     Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = "Delete meal",
-                                        tint = MaterialTheme.colorScheme.error
+                                        imageVector = Icons.Filled.WaterDrop,
+                                        contentDescription = "Water Intake",
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(24.dp)
                                     )
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text("Hydration Tracker", style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        text = "$todayWater / $waterGoal ml",
+                                        style = MaterialTheme.typography.titleLarge,
+                                        color = MaterialTheme.colorScheme.secondary
+                                    )
+                                    Spacer(modifier = Modifier.height(6.dp))
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        SecondaryButton(
+                                            text = "+250 ml",
+                                            onClick = { onAddWater(250L) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                        SecondaryButton(
+                                            text = "+500 ml",
+                                            onClick = { onAddWater(500L) },
+                                            modifier = Modifier.weight(1f)
+                                        )
+                                    }
                                 }
                             }
                         }
                     }
-                }
-            }
 
-            // Food Search & Catalog
-            item {
-                SectionHeader(
-                    title = "Food Database",
-                    actionLabel = "+ Custom Food",
-                    onAction = { showCreateFoodDialog = true }
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = { searchQuery = it },
-                    placeholder = { Text("Search chicken, oats, salmon, banana...") },
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (searchQuery.isNotBlank()) {
-                            IconButton(onClick = { searchQuery = "" }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Clear search")
-                            }
-                        }
-                    },
-                    shape = MaterialTheme.shapes.medium,
-                    singleLine = true,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("food_search_input")
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    FilterChip(
-                        selected = !favoritesOnly,
-                        onClick = { favoritesOnly = false },
-                        label = { Text("All (${allFoods.size})") }
-                    )
-                    FilterChip(
-                        selected = favoritesOnly,
-                        onClick = { favoritesOnly = true },
-                        label = { Text("Favorites") }
-                    )
-                }
-            }
+                    // Grouped Meal Sections: Breakfast, Lunch, Dinner, Snacks
+                    item {
+                        SectionHeader(title = "Today's Meals (${todayMeals.size})")
+                    }
 
-            if (filteredFoods.isEmpty()) {
-                item {
-                    EmptyStateCard(
-                        icon = Icons.Filled.Search,
-                        title = "No matching foods",
-                        subtitle = "Try another keyword or create a custom nutrition entry.",
-                        actionLabel = "Add Custom Food",
-                        onAction = { showCreateFoodDialog = true }
-                    )
-                }
-            } else {
-                items(filteredFoods.take(15), key = { it.id.ifBlank { it.name } }) { food ->
-                    FitTrackCard(
-                        modifier = Modifier.fillMaxWidth(),
-                        onClick = { selectedFoodForLog = food }
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                    items(mealGroups, key = { it.first }) { (mealKey, mealTitle, groupItems) ->
+                        val groupCals = groupItems.sumOf { it.calories }.toInt()
+                        val groupP = groupItems.sumOf { it.proteinG }.toInt()
+                        val groupC = groupItems.sumOf { it.carbsG }.toInt()
+                        val groupF = groupItems.sumOf { it.fatG }.toInt()
+
+                        FitTrackCard(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("meal_group_$mealKey")
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(food.name, style = MaterialTheme.typography.titleMedium)
-                                Spacer(modifier = Modifier.height(2.dp))
-                                Text(
-                                    text = "${food.caloriesPer100g.toInt()} kcal/100g • P ${food.proteinPer100g.toInt()}g • C ${food.carbsPer100g.toInt()}g • F ${food.fatPer100g.toInt()}g",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                                Text(
-                                    text = "Serving: ${food.servingLabel}",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.secondary
-                                )
-                            }
-                            Row {
-                                IconButton(onClick = { onToggleFavorite(food) }) {
-                                    Icon(
-                                        imageVector = if (food.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
-                                        contentDescription = "Favorite",
-                                        tint = if (food.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(mealTitle, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                    Text(
+                                        text = if (groupItems.isEmpty()) {
+                                            "No foods logged"
+                                        } else {
+                                            "$groupCals kcal • P ${groupP}g / C ${groupC}g / F ${groupF}g"
+                                        },
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = if (groupItems.isEmpty()) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.secondary
                                     )
                                 }
-                                IconButton(onClick = { selectedFoodForLog = food }) {
-                                    Icon(
-                                        Icons.Filled.Add,
-                                        contentDescription = "Log food",
-                                        tint = MaterialTheme.colorScheme.secondary
-                                    )
+                                TextButton(onClick = {
+                                    selectedTargetDateKey = today
+                                    selectedTargetMealType = mealKey
+                                    showQuickAddSheet = true
+                                }) {
+                                    Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text("Add")
+                                }
+                            }
+
+                            if (groupItems.isNotEmpty()) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                HorizontalDivider(color = ext.border.copy(alpha = 0.7f))
+                                groupItems.forEachIndexed { idx, meal ->
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(meal.foodName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                            Text(
+                                                "${meal.grams.toInt()}g • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        Row {
+                                            IconButton(onClick = { editingMeal = meal }) {
+                                                Icon(Icons.Filled.Edit, contentDescription = "Edit quantity", modifier = Modifier.size(18.dp))
+                                            }
+                                            IconButton(onClick = { onDeleteMeal(meal.id) }) {
+                                                Icon(
+                                                    Icons.Filled.Delete,
+                                                    contentDescription = "Delete meal",
+                                                    tint = MaterialTheme.colorScheme.error,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (idx < groupItems.lastIndex) {
+                                        HorizontalDivider(color = ext.border.copy(alpha = 0.4f))
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Food Search & Catalog
+                    item {
+                        SectionHeader(
+                            title = "Food Database",
+                            actionLabel = "+ Custom Food",
+                            onAction = { showCreateFoodDialog = true }
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            placeholder = { Text("Search chicken, oats, salmon, banana...") },
+                            leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                            trailingIcon = {
+                                if (searchQuery.isNotBlank()) {
+                                    IconButton(onClick = { searchQuery = "" }) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Clear search")
+                                    }
+                                }
+                            },
+                            shape = MaterialTheme.shapes.medium,
+                            singleLine = true,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("food_search_input")
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilterChip(
+                                selected = !favoritesOnly,
+                                onClick = { favoritesOnly = false },
+                                label = { Text("All (${allFoods.size})") }
+                            )
+                            FilterChip(
+                                selected = favoritesOnly,
+                                onClick = { favoritesOnly = true },
+                                label = { Text("Favorites") }
+                            )
+                        }
+                    }
+
+                    if (filteredFoods.isEmpty()) {
+                        item {
+                            EmptyStateCard(
+                                icon = Icons.Filled.Search,
+                                title = "No matching foods",
+                                subtitle = "Try another keyword or create a custom nutrition entry.",
+                                actionLabel = "Add Custom Food",
+                                onAction = { showCreateFoodDialog = true }
+                            )
+                        }
+                    } else {
+                        items(filteredFoods.take(15), key = { it.id.ifBlank { it.name } }) { food ->
+                            FitTrackCard(
+                                modifier = Modifier.fillMaxWidth(),
+                                onClick = {
+                                    selectedTargetDateKey = today
+                                    selectedTargetMealType = "lunch"
+                                    selectedFoodForLog = food
+                                }
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(food.name, style = MaterialTheme.typography.titleMedium)
+                                        Spacer(modifier = Modifier.height(2.dp))
+                                        Text(
+                                            text = "${food.caloriesPer100g.toInt()} kcal/100g • P ${food.proteinPer100g.toInt()}g • C ${food.carbsPer100g.toInt()}g • F ${food.fatPer100g.toInt()}g",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Serving: ${food.servingLabel}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.secondary
+                                        )
+                                    }
+                                    Row {
+                                        IconButton(onClick = { onToggleFavorite(food) }) {
+                                            Icon(
+                                                imageVector = if (food.isFavorite) Icons.Filled.Favorite else Icons.Filled.FavoriteBorder,
+                                                contentDescription = "Favorite",
+                                                tint = if (food.isFavorite) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        IconButton(onClick = {
+                                            selectedTargetDateKey = today
+                                            selectedTargetMealType = "lunch"
+                                            selectedFoodForLog = food
+                                        }) {
+                                            Icon(
+                                                Icons.Filled.Add,
+                                                contentDescription = "Log food",
+                                                tint = MaterialTheme.colorScheme.secondary
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -516,12 +637,36 @@ fun NutritionScreen(
         }
     }
 
+    if (showQuickAddSheet) {
+        QuickAddFoodSheet(
+            allFoods = allFoods,
+            recentFoods = recentFoods,
+            savedRecipes = savedRecipes,
+            initialMealType = selectedTargetMealType,
+            targetDateKey = selectedTargetDateKey,
+            onPickFood = { food, grams, mealType ->
+                onLogFoodWithDate(food, grams, mealType, selectedTargetDateKey)
+                showQuickAddSheet = false
+            },
+            onPickRecipe = { recipe, mealType ->
+                onLogRecipe(recipe, mealType, 1.0)
+                showQuickAddSheet = false
+            },
+            onOpenCreateCustom = {
+                showQuickAddSheet = false
+                showCreateFoodDialog = true
+            },
+            onDismiss = { showQuickAddSheet = false }
+        )
+    }
+
     selectedFoodForLog?.let { food ->
         LogFoodDialog(
             food = food,
+            initialMealType = selectedTargetMealType,
             onDismiss = { selectedFoodForLog = null },
             onConfirm = { grams, mealType ->
-                onLogFood(food, grams, mealType)
+                onLogFoodWithDate(food, grams, mealType, selectedTargetDateKey)
                 selectedFoodForLog = null
             }
         )
@@ -551,13 +696,146 @@ fun NutritionScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
+private fun QuickAddFoodSheet(
+    allFoods: List<FoodItem>,
+    recentFoods: List<RecentFoodEntry>,
+    savedRecipes: List<SavedRecipe>,
+    initialMealType: String,
+    targetDateKey: String,
+    onPickFood: (FoodItem, Double, String) -> Unit,
+    onPickRecipe: (SavedRecipe, String) -> Unit,
+    onOpenCreateCustom: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val ext = LocalFitTrackColors.current
+    var sourceTab by remember { mutableIntStateOf(0) } // 0=All, 1=Recent, 2=Favorites, 3=Recipes
+    var search by remember { mutableStateOf("") }
+    var mealType by remember { mutableStateOf(initialMealType) }
+    var gramsText by remember { mutableStateOf("100") }
+
+    val sourceFoods = remember(sourceTab, allFoods, recentFoods, search) {
+        val base = when (sourceTab) {
+            1 -> recentFoods.map { it.toFoodItem() }
+            2 -> allFoods.filter { it.isFavorite }
+            else -> allFoods
+        }
+        base.filter {
+            search.isBlank() || it.name.contains(search, ignoreCase = true) || it.brand.contains(search, ignoreCase = true)
+        }
+    }
+
+    FitTrackBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text("Quick Add ($targetDateKey)", style = MaterialTheme.typography.headlineSmall)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("breakfast", "lunch", "dinner", "snack").forEach { type ->
+                    FilterChip(
+                        selected = mealType == type,
+                        onClick = { mealType = type },
+                        label = { Text(if (type == "snack") "Snacks" else type.replaceFirstChar { it.uppercase() }) }
+                    )
+                }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = search,
+                    onValueChange = { search = it },
+                    placeholder = { Text("Search food or recipe...") },
+                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                    singleLine = true,
+                    modifier = Modifier.weight(1.6f)
+                )
+                OutlinedTextField(
+                    value = gramsText,
+                    onValueChange = { gramsText = it.filter { c -> c.isDigit() || c == '.' } },
+                    label = { Text("Grams") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    modifier = Modifier.weight(0.8f)
+                )
+            }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("All", "Recent (${recentFoods.size})", "Favorites", "Recipes (${savedRecipes.size})").forEachIndexed { i, label ->
+                    FilterChip(
+                        selected = sourceTab == i,
+                        onClick = { sourceTab = i },
+                        label = { Text(label) }
+                    )
+                }
+            }
+
+            if (sourceTab == 3) {
+                if (savedRecipes.isEmpty()) {
+                    Text("No saved recipes yet.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                } else {
+                    savedRecipes.forEach { r ->
+                        Surface(
+                            onClick = { onPickRecipe(r, mealType) },
+                            shape = MaterialTheme.shapes.small,
+                            color = ext.surfaceElevated,
+                            border = BorderStroke(1.dp, ext.border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(r.name, style = MaterialTheme.typography.titleSmall)
+                                    Text("${r.caloriesPerServing.toInt()} kcal/srv • P ${r.proteinPerServingG.toInt()}g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                                }
+                                Icon(Icons.Filled.Add, contentDescription = "Log ${r.name}", tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            } else {
+                sourceFoods.take(12).forEach { food ->
+                    val g = (gramsText.toDoubleOrNull() ?: food.servingSizeGrams).coerceIn(1.0, 5000.0)
+                    Surface(
+                        onClick = { onPickFood(food, g, mealType) },
+                        shape = MaterialTheme.shapes.small,
+                        color = ext.surfaceElevated,
+                        border = BorderStroke(1.dp, ext.border),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(food.name, style = MaterialTheme.typography.titleSmall)
+                                Text("${food.caloriesPer100g.toInt()} kcal/100g • P ${food.proteinPer100g.toInt()}g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            }
+                            Icon(Icons.Filled.Add, contentDescription = "Log ${food.name}", tint = MaterialTheme.colorScheme.primary)
+                        }
+                    }
+                }
+            }
+
+            OutlinedButton(
+                onClick = onOpenCreateCustom,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text("Create New Custom Food")
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
 private fun LogFoodDialog(
     food: FoodItem,
+    initialMealType: String = "lunch",
     onDismiss: () -> Unit,
     onConfirm: (Double, String) -> Unit
 ) {
     var gramsText by remember { mutableStateOf(food.servingSizeGrams.toInt().toString()) }
-    var mealType by remember { mutableStateOf("lunch") }
+    var mealType by remember { mutableStateOf(initialMealType) }
     val grams = (gramsText.toDoubleOrNull() ?: food.servingSizeGrams).coerceIn(1.0, 5000.0)
     val factor = grams / 100.0
 
@@ -584,7 +862,7 @@ private fun LogFoodDialog(
                         FilterChip(
                             selected = mealType == type,
                             onClick = { mealType = type },
-                            label = { Text(type.replaceFirstChar { it.uppercase() }) }
+                            label = { Text(if (type == "snack") "Snacks" else type.replaceFirstChar { it.uppercase() }) }
                         )
                     }
                 }
@@ -887,20 +1165,76 @@ fun AiFoodScannerScreen(
                             }
                         }
 
-                        result.items.forEach { item ->
+                        result.items.forEachIndexed { idx, item ->
+                            var editName by remember(idx, item.name) { mutableStateOf(item.name) }
+                            var editGrams by remember(idx, item.estimatedGrams) { mutableStateOf(item.estimatedGrams.toInt().toString()) }
+                            var editCals by remember(idx, item.calories) { mutableStateOf(item.calories.toInt().toString()) }
+                            var editProtein by remember(idx, item.proteinG) { mutableStateOf(item.proteinG.toInt().toString()) }
+                            var editCarbs by remember(idx, item.carbsG) { mutableStateOf(item.carbsG.toInt().toString()) }
+                            var editFat by remember(idx, item.fatG) { mutableStateOf(item.fatG.toInt().toString()) }
+
                             FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                                Text(item.name, style = MaterialTheme.typography.titleMedium)
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = "~${item.estimatedGrams.toInt()}g • ~${item.calories.toInt()} kcal (P ${item.proteinG.toInt()}g / C ${item.carbsG.toInt()}g / F ${item.fatG.toInt()}g)",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.secondary
+                                OutlinedTextField(
+                                    value = editName,
+                                    onValueChange = { editName = it },
+                                    label = { Text("Food Name (editable)") },
+                                    singleLine = true,
+                                    modifier = Modifier.fillMaxWidth()
                                 )
-                                Text(
-                                    text = item.confidenceNote,
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = editGrams,
+                                        onValueChange = { editGrams = it.filter { c -> c.isDigit() || c == '.' } },
+                                        label = { Text("Grams") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = editCals,
+                                        onValueChange = { editCals = it.filter { c -> c.isDigit() || c == '.' } },
+                                        label = { Text("kcal") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    OutlinedTextField(
+                                        value = editProtein,
+                                        onValueChange = { editProtein = it.filter { c -> c.isDigit() || c == '.' } },
+                                        label = { Text("P (g)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = editCarbs,
+                                        onValueChange = { editCarbs = it.filter { c -> c.isDigit() || c == '.' } },
+                                        label = { Text("C (g)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedTextField(
+                                        value = editFat,
+                                        onValueChange = { editFat = it.filter { c -> c.isDigit() || c == '.' } },
+                                        label = { Text("F (g)") },
+                                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                        singleLine = true,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                }
+                                if (item.confidenceNote.isNotBlank()) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = item.confidenceNote,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(10.dp))
                                 GradientButton(
                                     text = "Confirm & Log Item",
@@ -909,12 +1243,12 @@ fun AiFoodScannerScreen(
                                         onConfirmLogMeal(
                                             MealLog(
                                                 mealType = selectedMealType,
-                                                foodName = item.name,
-                                                grams = item.estimatedGrams,
-                                                calories = item.calories,
-                                                proteinG = item.proteinG,
-                                                carbsG = item.carbsG,
-                                                fatG = item.fatG,
+                                                foodName = editName.trim().ifBlank { item.name },
+                                                grams = (editGrams.toDoubleOrNull() ?: item.estimatedGrams).coerceIn(1.0, 5000.0),
+                                                calories = (editCals.toDoubleOrNull() ?: item.calories).coerceAtLeast(0.0),
+                                                proteinG = (editProtein.toDoubleOrNull() ?: item.proteinG).coerceAtLeast(0.0),
+                                                carbsG = (editCarbs.toDoubleOrNull() ?: item.carbsG).coerceAtLeast(0.0),
+                                                fatG = (editFat.toDoubleOrNull() ?: item.fatG).coerceAtLeast(0.0),
                                                 fiberG = item.fiberG,
                                                 sugarG = item.sugarG,
                                                 source = "ai_scan"
@@ -936,12 +1270,23 @@ fun AiFoodScannerScreen(
 @Composable
 fun AiMealPlannerScreen(
     state: AsyncState<AiMealPlanResult>,
+    nutritionPreferences: NutritionPreferences = NutritionPreferences(),
     onGenerate: (String, String) -> Unit,
     onLogSuggestion: (MealLog) -> Unit,
     onBack: () -> Unit
 ) {
-    var preferences by remember { mutableStateOf("High protein, whole foods") }
-    var allergies by remember { mutableStateOf("None") }
+    var preferences by remember(nutritionPreferences.dietaryStyle) {
+        mutableStateOf(
+            if (nutritionPreferences.dietaryStyle.isNotBlank()) {
+                "${nutritionPreferences.dietaryStyle}, ${nutritionPreferences.mealsPerDay} meals/day"
+            } else {
+                "High protein, whole foods"
+            }
+        )
+    }
+    var allergies by remember(nutritionPreferences.allergies) {
+        mutableStateOf(nutritionPreferences.allergies.ifBlank { "None" })
+    }
 
     Scaffold(
         containerColor = Color.Transparent,

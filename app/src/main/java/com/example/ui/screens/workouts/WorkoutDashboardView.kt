@@ -52,14 +52,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.example.data.catalog.WorkoutCatalog
 import com.example.data.model.PersonalRecord
 import com.example.data.model.TrainingNote
+import com.example.data.model.UserProfile
 import com.example.data.model.WorkoutPlan
+import com.example.data.model.WorkoutProgram
 import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
+import com.example.data.model.estimatedDurationMinutes
 import com.example.domain.FitnessCalculator
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.domain.WorkoutDashboardMetrics
+import com.example.platform.TrainingPreferences
 import com.example.platform.todayDateKey
 import com.example.ui.branding.FitTrackGeometricIllustration
 import com.example.ui.branding.FitTrackIllustrationType
@@ -79,14 +84,18 @@ import java.util.Locale
 
 @Composable
 fun WorkoutDashboardView(
+    profile: UserProfile?,
+    trainingPreferences: TrainingPreferences,
     metrics: WorkoutDashboardMetrics,
     allPlans: List<WorkoutPlan>,
+    customPrograms: List<WorkoutProgram>,
     sessions: List<WorkoutSessionLog>,
     schedules: List<WorkoutScheduleItem>,
     personalRecords: List<PersonalRecord>,
     trainingNotes: List<TrainingNote>,
     onStartWorkout: (WorkoutPlan) -> Unit,
     onOpenBuilder: () -> Unit,
+    onOpenPrograms: () -> Unit,
     onOpenCalendar: () -> Unit,
     onOpenAiPlanner: () -> Unit,
     onOpenAnalytics: () -> Unit,
@@ -99,9 +108,24 @@ fun WorkoutDashboardView(
     val upcomingSchedule = remember(schedules, today) {
         schedules.filter { it.dateKey >= today && it.status == "scheduled" }.minByOrNull { it.dateKey }
     }
-    val todayFocusPlan = remember(todaySchedule, upcomingSchedule, allPlans) {
+    val allPrograms = remember(profile, customPrograms) {
+        customPrograms + WorkoutCatalog.personalizedProgramsForUser(profile)
+    }
+    val activeProgram = remember(trainingPreferences, allPrograms) {
+        allPrograms.firstOrNull {
+            trainingPreferences.activeProgramId.isNotBlank() && it.id == trainingPreferences.activeProgramId
+        } ?: allPrograms.firstOrNull {
+            trainingPreferences.activeProgramName.isNotBlank() &&
+                it.name.equals(trainingPreferences.activeProgramName, ignoreCase = true)
+        } ?: allPrograms.firstOrNull {
+            it.name.contains(trainingPreferences.preferredSplit, ignoreCase = true)
+        } ?: allPrograms.firstOrNull()
+    }
+    val todayFocusPlan = remember(todaySchedule, upcomingSchedule, activeProgram, allPlans) {
         val targetId = todaySchedule?.workoutId?.ifBlank { null } ?: upcomingSchedule?.workoutId?.ifBlank { null }
-        allPlans.firstOrNull { it.id == targetId } ?: allPlans.firstOrNull()
+        allPlans.firstOrNull { it.id == targetId }
+            ?: activeProgram?.workouts?.firstOrNull()
+            ?: allPlans.firstOrNull()
     }
 
     var showNoteDialog by remember { mutableStateOf(false) }
@@ -115,7 +139,7 @@ fun WorkoutDashboardView(
         val offsetFromMon = if (dow == Calendar.SUNDAY) -6 else Calendar.MONDAY - dow
         cal.add(Calendar.DAY_OF_YEAR, offsetFromMon)
         val sessionDates = sessions.mapNotNull { it.dateKey.ifBlank { null } }.toSet()
-        (0..6).map { idx ->
+        (0..6).map { _ ->
             val dk = fmt.format(cal.time)
             val label = dayFmt.format(cal.time)
             val dom = cal.get(Calendar.DAY_OF_MONTH).toString()
@@ -132,12 +156,62 @@ fun WorkoutDashboardView(
         }
     }
 
+    val weekStartDateKey = remember(weekDays) { weekDays.firstOrNull()?.first ?: today }
+    val weeklySessions = remember(sessions, weekStartDateKey) {
+        sessions.filter { s ->
+            val dk = s.dateKey.ifBlank {
+                WorkoutAnalyticsEngine.dateKeyFromEpoch(s.createdAt?.toDate()?.time ?: 0L)
+            }
+            dk >= weekStartDateKey
+        }
+    }
+    val weeklyVolumeKg = remember(weeklySessions) {
+        weeklySessions.sumOf { s -> if (s.workingVolumeKg > 0.0) s.workingVolumeKg else s.totalVolumeKg }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 112.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        // Today's Focus Hero Card
+        // Current Training Program Card
+        if (activeProgram != null) {
+            item {
+                FitTrackCard(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("workout_current_program_card"),
+                    onClick = onOpenPrograms
+                ) {
+                    SectionHeader(
+                        title = "Current Program",
+                        actionLabel = "Switch",
+                        onAction = onOpenPrograms
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(activeProgram.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                            Text(
+                                "${activeProgram.daysPerWeek} days/wk • ${activeProgram.level.replaceFirstChar { it.uppercase() }} • ${activeProgram.workouts.size} workouts",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                        StatusBadge(
+                            text = if (activeProgram.isCustom) "CUSTOM" else activeProgram.category.replace("_", " ").uppercase(),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+
+        // Today's Planned Workout / Focus Hero Card
         if (todayFocusPlan != null) {
             item {
                 GlassCard(
@@ -154,15 +228,15 @@ fun WorkoutDashboardView(
                                 text = when {
                                     todaySchedule?.status == "completed" -> "COMPLETED TODAY"
                                     todaySchedule?.status == "rest" -> "ACTIVE RECOVERY DAY"
-                                    todaySchedule != null -> "SCHEDULED TODAY"
-                                    else -> "RECOMMENDED FOCUS"
+                                    todaySchedule != null -> "TODAY'S PLANNED WORKOUT"
+                                    else -> "RECOMMENDED WORKOUT"
                                 },
                                 tint = if (todaySchedule?.status == "completed") ext.success else MaterialTheme.colorScheme.primary
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(todayFocusPlan.name, style = MaterialTheme.typography.titleLarge)
                             Text(
-                                "${todayFocusPlan.exercises.size} exercises • ${todayFocusPlan.level.replaceFirstChar { it.uppercase() }}",
+                                "${todayFocusPlan.exercises.size} exercises • ~${todayFocusPlan.estimatedDurationMinutes()} min • ${todayFocusPlan.level.replaceFirstChar { it.uppercase() }}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -170,7 +244,7 @@ fun WorkoutDashboardView(
                     }
                     Spacer(modifier = Modifier.height(12.dp))
                     GradientButton(
-                        text = "Start Workout",
+                        text = if (todaySchedule?.status == "rest") "Train Anyway" else "Start Workout",
                         icon = Icons.Filled.PlayArrow,
                         onClick = { onStartWorkout(todayFocusPlan) },
                         modifier = Modifier
@@ -185,7 +259,7 @@ fun WorkoutDashboardView(
         item {
             FitTrackCard(modifier = Modifier.fillMaxWidth(), onClick = onOpenCalendar) {
                 SectionHeader(
-                    title = "This Week",
+                    title = "Weekly Training Schedule",
                     actionLabel = "Calendar",
                     onAction = onOpenCalendar
                 )
@@ -259,9 +333,9 @@ fun WorkoutDashboardView(
                         onClick = onOpenAnalytics
                     )
                     StatCard(
-                        title = "Sessions",
+                        title = "Completed",
                         value = "${metrics.totalWorkouts}",
-                        subtitle = String.format("%.1f / week", metrics.weeklyFrequency),
+                        subtitle = "${weeklySessions.size} this week",
                         icon = Icons.Filled.FitnessCenter,
                         tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.weight(1f),
@@ -270,9 +344,9 @@ fun WorkoutDashboardView(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatCard(
-                        title = "Working Vol",
-                        value = "${metrics.totalWorkingVolumeKg.toInt()} kg",
-                        subtitle = "Excludes warm-ups",
+                        title = "Weekly Volume",
+                        value = "${weeklyVolumeKg.toInt()} kg",
+                        subtitle = "All-time ${metrics.totalWorkingVolumeKg.toInt()} kg",
                         icon = Icons.Filled.EmojiEvents,
                         tint = ext.success,
                         modifier = Modifier.weight(1f),
@@ -288,6 +362,36 @@ fun WorkoutDashboardView(
                         onClick = onOpenAnalytics
                     )
                 }
+            }
+        }
+
+        // Recovery & Rest-Day Guidance Card
+        item {
+            FitTrackCard(
+                modifier = Modifier.fillMaxWidth(),
+                accentBorder = if (todaySchedule?.status == "rest") MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f) else ext.border
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Recovery & Readiness", style = MaterialTheme.typography.titleMedium)
+                    StatusBadge(
+                        text = if (todaySchedule?.status == "rest") "REST DAY" else "ACTIVE",
+                        tint = if (todaySchedule?.status == "rest") MaterialTheme.colorScheme.secondary else ext.success
+                    )
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = if (todaySchedule?.status == "rest") {
+                        "Scheduled rest day. Prioritize sleep, walking, and light mobility so strength rebounds."
+                    } else {
+                        metrics.recoveryGuidance
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
 

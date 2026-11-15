@@ -198,7 +198,7 @@ fun ExerciseLibraryView(
                             Text(ex.name, style = MaterialTheme.typography.titleMedium)
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "${ex.muscleGroup} • ${ex.equipment}",
+                                text = "${ex.muscleGroup} • ${ex.equipment} • ${ex.defaultSets}×${ex.defaultRepMin}-${ex.defaultRepMax}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -285,10 +285,32 @@ private fun ExerciseDetailSheet(
                 }
             }
 
+            val recentSessionMatches = remember(exercise.id, exercise.name, sessions) {
+                sessions.mapNotNull { s ->
+                    val rec = s.exerciseRecords.firstOrNull {
+                        it.exerciseId == exercise.id || it.exerciseName.equals(exercise.name, ignoreCase = true)
+                    }
+                    if (rec != null && !rec.skipped && rec.sets.isNotEmpty()) {
+                        s to rec
+                    } else null
+                }.take(5)
+            }
+
             MuscleDiagramView(
                 primaryMuscle = exercise.muscleGroup,
                 secondaryMuscles = exercise.secondaryMuscles
             )
+
+            // Sets & Rep Recommendations Pill Bar
+            FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                SectionHeader(title = "Recommended Protocol")
+                Spacer(modifier = Modifier.height(6.dp))
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    StatusBadge(text = "${exercise.defaultSets} SETS", tint = MaterialTheme.colorScheme.primary)
+                    StatusBadge(text = "${exercise.defaultRepMin}–${exercise.defaultRepMax} REPS", tint = MaterialTheme.colorScheme.secondary)
+                    StatusBadge(text = "${exercise.defaultRestSeconds}S REST", tint = ext.success)
+                }
+            }
 
             FitTrackCard(modifier = Modifier.fillMaxWidth()) {
                 SectionHeader(title = "Execution Steps")
@@ -319,21 +341,50 @@ private fun ExerciseDetailSheet(
                 }
             }
 
-            // Personal Logged Progress Chart
+            // Previous Performance & Progression History
             FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                SectionHeader(title = "Your Progression History")
+                SectionHeader(title = "Previous Performance History")
                 Spacer(modifier = Modifier.height(8.dp))
-                if (history.isEmpty()) {
+                if (history.isEmpty() && recentSessionMatches.isEmpty()) {
                     Text(
-                        text = "No completed sets logged for ${exercise.name} yet. Target ${exercise.defaultSets} × ${exercise.defaultRepMin}–${exercise.defaultRepMax} reps (${exercise.defaultRestSeconds}s rest).",
+                        text = "No completed sets logged for ${exercise.name} yet. Start a workout to record baseline sets.",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 } else {
-                    TrendLineChart(
-                        points = history.map { it.dateKey.takeLast(5) to it.estimatedOneRmKg.toFloat() },
-                        lineColor = MaterialTheme.colorScheme.secondary
-                    )
+                    if (history.isNotEmpty()) {
+                        TrendLineChart(
+                            points = history.map { it.dateKey.takeLast(5) to it.estimatedOneRmKg.toFloat() },
+                            lineColor = MaterialTheme.colorScheme.secondary
+                        )
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
+                    recentSessionMatches.forEach { (session, rec) ->
+                        val summary = rec.sets.joinToString(" • ") { s ->
+                            "${WorkoutAnalyticsEngine.formatWeight(s.weightKg)}×${s.reps}"
+                        }
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = ext.surfaceElevated,
+                            border = BorderStroke(1.dp, ext.border),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 3.dp)
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = "${session.dateKey.ifBlank { "Session" }} • ${session.workoutName}",
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = MaterialTheme.colorScheme.secondary
+                                )
+                                Text(
+                                    text = summary,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.Medium
+                                )
+                            }
+                        }
+                    }
                 }
             }
 

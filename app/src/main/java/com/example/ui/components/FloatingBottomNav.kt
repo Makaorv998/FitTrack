@@ -95,6 +95,7 @@ fun FloatingBottomNavigationBar(
             ) {
                 tabs.forEach { tab ->
                     val selected = isSelected(tab.route)
+                    val reducedMotion = com.example.ui.theme.rememberReducedMotion()
                     val tint by animateColorAsState(
                         targetValue = if (selected) {
                             MaterialTheme.colorScheme.onPrimary
@@ -104,7 +105,7 @@ fun FloatingBottomNavigationBar(
                         label = "tab_tint"
                     )
                     val scale by animateFloatAsState(
-                        targetValue = if (selected) 1.04f else 1f,
+                        targetValue = if (selected && !reducedMotion) 1.04f else 1f,
                         animationSpec = spring(stiffness = Spring.StiffnessMediumLow),
                         label = "tab_scale"
                     )

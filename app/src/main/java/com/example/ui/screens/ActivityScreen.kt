@@ -5,7 +5,6 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -13,9 +12,12 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -28,9 +30,10 @@ import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material.icons.filled.LocationOn
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Route
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -39,28 +42,21 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.example.BuildConfig
 import com.example.data.model.GpsActivity
-import com.example.data.model.LatLngPoint
 import com.example.data.model.StepRecord
 import com.example.data.model.UserProfile
 import com.example.domain.FitnessCalculator
@@ -81,20 +77,19 @@ import com.example.ui.components.LocationPermissionRequester
 import com.example.ui.components.ScreenHeader
 import com.example.ui.components.SecondaryButton
 import com.example.ui.components.SectionHeader
+import com.example.ui.components.SegmentedControl
 import com.example.ui.components.SimpleBarChart
 import com.example.ui.components.StatusBadge
 import com.example.ui.components.rememberLocationPermissionState
 import com.example.ui.theme.HeroNumberTextStyle
 import com.example.ui.theme.LocalFitTrackColors
 import com.example.ui.theme.MetricNumberTextStyle
-import com.google.android.gms.maps.model.CameraPosition
-import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.GoogleMap
-import com.google.maps.android.compose.MapProperties
-import com.google.maps.android.compose.Marker
-import com.google.maps.android.compose.MarkerState
-import com.google.maps.android.compose.Polyline
-import com.google.maps.android.compose.rememberCameraPositionState
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+
+private val Int.sp get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)
 
 @Composable
 fun ActivityScreen(
@@ -111,11 +106,13 @@ fun ActivityScreen(
     onResumeGps: () -> Unit,
     onFinishGps: () -> Unit,
     onDiscardGps: () -> Unit,
-    onDeleteGpsActivity: (String) -> Unit
+    onDeleteGpsActivity: (String) -> Unit,
+    onOpenReadOnlyMap: (String?) -> Unit = {}
 ) {
     val ext = LocalFitTrackColors.current
     var selectedType by remember { mutableStateOf("running") }
     var startPendingPermission by remember { mutableStateOf(false) }
+    var statsWindowIndex by remember { mutableIntStateOf(0) } // 0 = Weekly (7D), 1 = Monthly (30D)
 
     val stepGoal = (profile?.dailyStepGoal ?: 10000L).coerceAtLeast(1000L)
     val heightCm = profile?.heightCm ?: 172.0
@@ -123,6 +120,31 @@ fun ActivityScreen(
     val stepDistanceKm = FitnessCalculator.calculateWalkingDistanceKm(todaySteps, heightCm)
     val stepCalories = (todaySteps * 0.04) * (weightKg / 70.0)
     val activeMinutes = (todaySteps / 100L).toInt()
+
+    val windowDays = if (statsWindowIndex == 0) 7 else 30
+    val cutoffDateKey = remember(windowDays) {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -(windowDays - 1))
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+    }
+    val cutoffMs = remember(windowDays) {
+        val cal = Calendar.getInstance()
+        cal.add(Calendar.DAY_OF_YEAR, -(windowDays - 1))
+        cal.timeInMillis
+    }
+
+    val windowStepRecords = remember(stepRecords, cutoffDateKey) {
+        stepRecords.filter { it.dateKey >= cutoffDateKey }.sortedBy { it.dateKey }
+    }
+    val windowGps = remember(gpsHistory, cutoffMs) {
+        gpsHistory.filter {
+            val ts = if (it.startedAtMs > 0L) it.startedAtMs else (it.createdAt?.toDate()?.time ?: 0L)
+            ts >= cutoffMs
+        }
+    }
+    val walkingSessions = remember(gpsHistory) { gpsHistory.filter { it.activityType == "walking" } }
+    val runningSessions = remember(gpsHistory) { gpsHistory.filter { it.activityType == "running" } }
+    val cyclingSessions = remember(gpsHistory) { gpsHistory.filter { it.activityType == "cycling" } }
 
     val locationPermissionState = rememberLocationPermissionState { fine, coarse ->
         if ((fine || coarse) && startPendingPermission) {
@@ -133,10 +155,6 @@ fun ActivityScreen(
         }
     }
 
-    val hasMapsApiKey = remember {
-        BuildConfig.MAPS_API_KEY.isNotBlank() && BuildConfig.MAPS_API_KEY != "MY_MAPS_API_KEY"
-    }
-
     val pulseTransition = rememberInfiniteTransition(label = "gps_live_pulse")
     val liveDotColor by pulseTransition.animateColor(
         initialValue = ext.success,
@@ -144,21 +162,22 @@ fun ActivityScreen(
         animationSpec = infiniteRepeatable(tween(750), RepeatMode.Reverse),
         label = "dot_color"
     )
+    val bottomClearance = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 104.dp
 
     AuroraAmbientBackground {
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = 112.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 16.dp, bottom = bottomClearance),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             item {
                 ScreenHeader(
-                    title = "Activity & GPS",
-                    subtitle = "Motion sensors & outdoor route telemetry"
+                    title = "Activity",
+                    subtitle = "Steps, outdoor workouts & route history"
                 )
             }
 
-            // Large Step Counter Hero Card
+            // 1. Daily Steps Hero Card
             item {
                 GlassCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -187,7 +206,7 @@ fun ActivityScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = String.format("%.2f km • %.0f kcal • %d min", stepDistanceKm, stepCalories, activeMinutes),
+                                text = String.format(Locale.US, "%.2f km • %.0f kcal • %d min", stepDistanceKm, stepCalories, activeMinutes),
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -234,7 +253,38 @@ fun ActivityScreen(
                 }
             }
 
-            // Live GPS Session Card
+            // 2. Walking, Running & Cycling Activity Breakdown
+            item {
+                FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                    SectionHeader(title = "Activity Breakdown")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        ModalitySummaryTile(
+                            title = "Walking",
+                            sessions = walkingSessions,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ModalitySummaryTile(
+                            title = "Running",
+                            sessions = runningSessions,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.weight(1f)
+                        )
+                        ModalitySummaryTile(
+                            title = "Cycling",
+                            sessions = cyclingSessions,
+                            tint = ext.success,
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+
+            // 3. Live GPS Session Recording Card (cleanly separated from Read-Only Map Screen)
             item {
                 ActivityCard(
                     modifier = Modifier.fillMaxWidth(),
@@ -245,7 +295,7 @@ fun ActivityScreen(
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SectionHeader(title = "GPS Outdoor Session")
+                        SectionHeader(title = "Outdoor GPS Tracker")
                         if (gpsState.status == TrackingStatus.ACTIVE) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(liveDotColor))
@@ -270,13 +320,13 @@ fun ActivityScreen(
                                 )
                             }
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(10.dp))
                     } else {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            TelemetryStat("Distance", String.format("%.2f km", gpsState.distanceKm))
+                            TelemetryStat("Distance", String.format(Locale.US, "%.2f km", gpsState.distanceKm))
                             TelemetryStat("Duration", FitnessCalculator.formatDuration(gpsState.elapsedSeconds))
                             TelemetryStat("Pace", FitnessCalculator.formatPace(gpsState.avgPaceMinPerKm))
                             TelemetryStat("Burn", "${gpsState.estimatedCalories.toInt()} kcal")
@@ -284,83 +334,12 @@ fun ActivityScreen(
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
-                    // Live Map / Tactical Vector Route View
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .clip(MaterialTheme.shapes.medium)
-                            .background(ext.backgroundSecondary)
-                    ) {
-                        if (hasMapsApiKey) {
-                            val lastPoint = gpsState.routePoints.lastOrNull()
-                                ?: gpsHistory.firstOrNull()?.routePoints?.lastOrNull()
-                            val targetLatLng = if (lastPoint != null) LatLng(lastPoint.lat, lastPoint.lng) else LatLng(37.7749, -122.4194)
-                            val cameraState = rememberCameraPositionState {
-                                position = CameraPosition.fromLatLngZoom(targetLatLng, 15f)
-                            }
-                            GoogleMap(
-                                modifier = Modifier.fillMaxSize(),
-                                cameraPositionState = cameraState,
-                                properties = MapProperties(isMyLocationEnabled = locationPermissionState.hasAnyLocation)
-                            ) {
-                                val polyPoints = gpsState.routePoints.map { LatLng(it.lat, it.lng) }
-                                if (polyPoints.size >= 2) {
-                                    Polyline(
-                                        points = polyPoints,
-                                        color = MaterialTheme.colorScheme.secondary,
-                                        width = 10f
-                                    )
-                                }
-                                polyPoints.firstOrNull()?.let {
-                                    Marker(state = MarkerState(position = it), title = "Start")
-                                }
-                                polyPoints.lastOrNull()?.let {
-                                    Marker(state = MarkerState(position = it), title = "Current")
-                                }
-                            }
-                        } else {
-                            val previewPoints = gpsState.routePoints.ifEmpty {
-                                gpsHistory.firstOrNull()?.routePoints.orEmpty()
-                            }
-                            TacticalRouteCanvas(
-                                points = previewPoints,
-                                lineColor = MaterialTheme.colorScheme.secondary,
-                                accentColor = MaterialTheme.colorScheme.primary
-                            )
-                            Surface(
-                                modifier = Modifier
-                                    .align(Alignment.TopStart)
-                                    .padding(10.dp),
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.90f),
-                                shape = MaterialTheme.shapes.small
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        Icons.Filled.LocationOn,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.secondary,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Text(
-                                        text = "Add MAPS_API_KEY in AI Studio Secrets for Google Maps tiles",
-                                        style = MaterialTheme.typography.labelSmall
-                                    )
-                                }
-                            }
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(14.dp))
                     LocationPermissionRequester(
                         permissionState = locationPermissionState,
                         showReadyIndicator = gpsState.status == TrackingStatus.IDLE
                     )
-                    Spacer(modifier = Modifier.height(10.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     when (gpsState.status) {
                         TrackingStatus.IDLE -> {
                             GradientButton(
@@ -377,6 +356,15 @@ fun ActivityScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("start_gps_button")
+                            )
+                            Spacer(modifier = Modifier.height(10.dp))
+                            SecondaryButton(
+                                text = "View Route Map & History",
+                                icon = Icons.Filled.Map,
+                                onClick = { onOpenReadOnlyMap(gpsHistory.firstOrNull()?.id) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("open_route_map_button")
                             )
                         }
 
@@ -424,13 +412,37 @@ fun ActivityScreen(
                 }
             }
 
-            // Weekly Step History Chart (real synced records)
-            if (stepRecords.isNotEmpty()) {
-                item {
-                    FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                        SectionHeader(title = "Weekly Step History")
-                        Spacer(modifier = Modifier.height(10.dp))
-                        val chartData = stepRecords.sortedBy { it.dateKey }.takeLast(7).map {
+            // 4. Weekly & Monthly Statistics
+            item {
+                FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                    SectionHeader(title = "Weekly & Monthly Statistics")
+                    Spacer(modifier = Modifier.height(10.dp))
+                    SegmentedControl(
+                        options = listOf("Weekly (7D)", "Monthly (30D)"),
+                        selectedIndex = statsWindowIndex,
+                        onSelect = { statsWindowIndex = it }
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    val avgSteps = if (windowStepRecords.isNotEmpty()) {
+                        windowStepRecords.sumOf { it.steps } / windowStepRecords.size
+                    } else todaySteps
+                    val totalDist = windowGps.sumOf { it.distanceKm } +
+                        windowStepRecords.sumOf { it.distanceKm }
+                    val totalBurn = windowGps.sumOf { it.caloriesBurned } +
+                        windowStepRecords.sumOf { it.caloriesBurned }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        TelemetryStat("Avg Steps", "$avgSteps")
+                        TelemetryStat("Distance", String.format(Locale.US, "%.1f km", totalDist))
+                        TelemetryStat("Burned", "${totalBurn.toInt()} kcal")
+                        TelemetryStat("Sessions", "${windowGps.size}")
+                    }
+                    if (windowStepRecords.isNotEmpty()) {
+                        Spacer(modifier = Modifier.height(12.dp))
+                        val chartData = windowStepRecords.takeLast(12).map {
                             it.dateKey.takeLast(5) to it.steps.toFloat()
                         }
                         SimpleBarChart(values = chartData)
@@ -445,7 +457,13 @@ fun ActivityScreen(
             }
 
             item {
-                SectionHeader(title = "GPS Activity History (${gpsHistory.size})")
+                SectionHeader(
+                    title = "GPS Activity History (${gpsHistory.size})",
+                    actionLabel = if (gpsHistory.isNotEmpty()) "Open Map" else null,
+                    onAction = if (gpsHistory.isNotEmpty()) {
+                        { onOpenReadOnlyMap(gpsHistory.firstOrNull()?.id) }
+                    } else null
+                )
             }
 
             if (gpsHistory.isEmpty()) {
@@ -453,32 +471,66 @@ fun ActivityScreen(
                     EmptyStateCard(
                         icon = Icons.AutoMirrored.Filled.DirectionsRun,
                         title = "No GPS sessions yet",
-                        subtitle = "Start a walk, run, or cycle above to map your first route.",
+                        subtitle = "Start a walk, run, or cycle above to record your first route.",
                         illustration = FitTrackIllustrationType.RUNNING
                     )
                 }
             } else {
                 items(gpsHistory, key = { it.id }) { session ->
-                    FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                    FitTrackCard(
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { onOpenReadOnlyMap(session.id) }
+                    ) {
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                StatusBadge(
-                                    text = session.activityType.uppercase(),
-                                    tint = MaterialTheme.colorScheme.secondary
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 76.dp, height = 64.dp)
+                                    .clip(MaterialTheme.shapes.small)
+                                    .background(ext.backgroundSecondary)
+                            ) {
+                                ReadOnlyRouteVectorCanvas(
+                                    points = session.routePoints,
+                                    startColor = ext.success,
+                                    finishColor = MaterialTheme.colorScheme.primary,
+                                    lineColor = MaterialTheme.colorScheme.secondary
                                 )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    StatusBadge(
+                                        text = session.activityType.uppercase(),
+                                        tint = MaterialTheme.colorScheme.secondary
+                                    )
+                                    Text(
+                                        text = SimpleDateFormat("MMM d", Locale.US).format(Date(session.startedAtMs)),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "${String.format("%.2f", session.distanceKm)} km • ${FitnessCalculator.formatDuration(session.durationSeconds)} • ${session.caloriesBurned.toInt()} kcal",
-                                    style = MaterialTheme.typography.titleMedium
+                                    text = "${String.format(Locale.US, "%.2f", session.distanceKm)} km • ${FitnessCalculator.formatDuration(session.durationSeconds)}",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Avg Pace: ${FitnessCalculator.formatPace(session.avgPaceMinPerKm)} • ${session.routePoints.size} GPS points",
+                                    text = "Pace ${FitnessCalculator.formatPace(session.avgPaceMinPerKm)} • ${session.caloriesBurned.toInt()} kcal",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(onClick = { onOpenReadOnlyMap(session.id) }) {
+                                Icon(
+                                    Icons.Filled.Route,
+                                    contentDescription = "View route on map",
+                                    tint = MaterialTheme.colorScheme.secondary
                                 )
                             }
                             IconButton(onClick = { onDeleteGpsActivity(session.id) }) {
@@ -497,74 +549,40 @@ fun ActivityScreen(
 }
 
 @Composable
-private fun TelemetryStat(label: String, value: String) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(value, style = MetricNumberTextStyle.copy(fontSize = 18.sp), fontWeight = FontWeight.Bold)
-        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+private fun ModalitySummaryTile(
+    title: String,
+    sessions: List<GpsActivity>,
+    tint: Color,
+    modifier: Modifier = Modifier
+) {
+    val totalKm = sessions.sumOf { it.distanceKm }
+    val totalCals = sessions.sumOf { it.caloriesBurned }.toInt()
+    Column(
+        modifier = modifier
+            .clip(MaterialTheme.shapes.small)
+            .background(tint.copy(alpha = 0.08f))
+            .padding(10.dp),
+        horizontalAlignment = Alignment.Start
+    ) {
+        Text(title, style = MaterialTheme.typography.labelLarge, color = tint, fontWeight = FontWeight.Bold)
+        Spacer(modifier = Modifier.height(4.dp))
+        Text(
+            text = String.format(Locale.US, "%.1f km", totalKm),
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "${sessions.size}x • $totalCals kcal",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
     }
 }
 
-private val Int.sp get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)
-
 @Composable
-private fun TacticalRouteCanvas(
-    points: List<LatLngPoint>,
-    lineColor: Color,
-    accentColor: Color
-) {
-    Canvas(modifier = Modifier.fillMaxSize()) {
-        val stepX = size.width / 6f
-        val stepY = size.height / 4f
-        for (i in 1..5) {
-            drawLine(Color.Gray.copy(alpha = 0.14f), Offset(i * stepX, 0f), Offset(i * stepX, size.height), 1f)
-        }
-        for (j in 1..3) {
-            drawLine(Color.Gray.copy(alpha = 0.14f), Offset(0f, j * stepY), Offset(size.width, j * stepY), 1f)
-        }
-
-        if (points.size >= 2) {
-            val minLat = points.minOf { it.lat }
-            val maxLat = points.maxOf { it.lat }
-            val minLng = points.minOf { it.lng }
-            val maxLng = points.maxOf { it.lng }
-            val latSpan = (maxLat - minLat).coerceAtLeast(0.0005)
-            val lngSpan = (maxLng - minLng).coerceAtLeast(0.0005)
-            val pad = 34f
-            val w = size.width - pad * 2
-            val h = size.height - pad * 2
-
-            val path = Path()
-            var startPt = Offset.Zero
-            var endPt = Offset.Zero
-            points.forEachIndexed { idx, p ->
-                val x = pad + (((p.lng - minLng) / lngSpan) * w).toFloat()
-                val y = pad + ((1.0 - (p.lat - minLat) / latSpan) * h).toFloat()
-                if (idx == 0) {
-                    startPt = Offset(x, y)
-                    path.moveTo(x, y)
-                } else {
-                    endPt = Offset(x, y)
-                    path.lineTo(x, y)
-                }
-            }
-            drawPath(
-                path = path,
-                brush = Brush.linearGradient(listOf(accentColor, lineColor)),
-                style = Stroke(width = 8f, cap = StrokeCap.Round)
-            )
-            drawCircle(color = accentColor, radius = 9f, center = startPt)
-            drawCircle(color = lineColor, radius = 9f, center = endPt)
-        } else {
-            drawCircle(
-                color = lineColor.copy(alpha = 0.25f),
-                radius = 28f,
-                center = Offset(size.width / 2f, size.height / 2f)
-            )
-            drawCircle(
-                color = lineColor,
-                radius = 9f,
-                center = Offset(size.width / 2f, size.height / 2f)
-            )
-        }
+private fun TelemetryStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MetricNumberTextStyle.copy(fontSize = 17.sp), fontWeight = FontWeight.Bold)
+        Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

@@ -1,6 +1,8 @@
 package com.example.ui.screens.workouts
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,21 +22,23 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -54,6 +58,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.example.data.catalog.WorkoutCatalog
 import com.example.data.model.CompletedSetRecord
@@ -78,6 +83,12 @@ import com.example.ui.components.MuscleDiagramView
 import com.example.ui.components.SecondaryButton
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.LocalFitTrackColors
+
+private fun formatCompactWeight(kg: Double): String = when {
+    kg <= 0.0 -> "BW"
+    kg % 1.0 == 0.0 -> "${kg.toInt()}"
+    else -> String.format(java.util.Locale.US, "%.1f", kg)
+}
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -126,11 +137,14 @@ fun ActiveWorkoutScreen(
         mutableStateOf(currentEntry?.targetWeightKg ?: 0.0)
     }
 
-    var showAnatomy by remember { mutableStateOf(false) }
+    var showInstructions by remember(idx) { mutableStateOf(false) }
+    var showAnatomy by remember(idx) { mutableStateOf(false) }
+    var showDirectInputDialog by remember { mutableStateOf(false) }
     var showReplaceSheet by remember { mutableStateOf(false) }
     var editingSetPair by remember { mutableStateOf<Pair<Int, CompletedSetRecord>?>(null) }
     var showFinishDialog by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
+    var extraPlannedRows by remember(idx) { mutableIntStateOf(0) }
 
     val progression = remember(currentEntry, sessions, personalRecords) {
         currentEntry?.let { entry ->
@@ -139,6 +153,23 @@ fun ActiveWorkoutScreen(
             }
             WorkoutAnalyticsEngine.analyzeProgression(entry, sessions, pr)
         }
+    }
+
+    val previousSetsForExercise = remember(currentEntry?.exerciseId, currentEntry?.exerciseName, sessions) {
+        if (currentEntry == null) emptyList()
+        else {
+            sessions.firstNotNullOfOrNull { s ->
+                val rec = s.exerciseRecords.firstOrNull {
+                    it.exerciseId == currentEntry.exerciseId ||
+                        it.exerciseName.equals(currentEntry.exerciseName, ignoreCase = true)
+                }
+                if (rec != null && !rec.skipped && rec.sets.isNotEmpty()) rec.sets else null
+            }.orEmpty()
+        }
+    }
+
+    val totalTargetSets = remember(active.plan.exercises) {
+        active.plan.exercises.sumOf { it.targetSets.toInt().coerceAtLeast(1) }
     }
 
     AuroraAmbientBackground {
@@ -165,12 +196,15 @@ fun ActiveWorkoutScreen(
                                 text = if (active.isPaused) "PAUSED" else "ACTIVE SESSION",
                                 tint = if (active.isPaused) ext.warning else ext.success
                             )
-                            StatusBadge(text = "SAVED LOCALLY", tint = MaterialTheme.colorScheme.secondary)
+                            StatusBadge(
+                                text = "${active.completedSetsCount}/$totalTargetSets SETS",
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(active.plan.name, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "${FitnessCalculator.formatDuration(active.elapsedSeconds)} • ${active.completedSetsCount} sets • Working ${active.workingVolumeKg.toInt()} kg",
+                            text = "${FitnessCalculator.formatDuration(active.elapsedSeconds)} elapsed • Working ${active.workingVolumeKg.toInt()} kg",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
@@ -201,9 +235,7 @@ fun ActiveWorkoutScreen(
                 onAdjustSeconds = onAdjustRest,
                 onTogglePause = onToggleRestPause,
                 onSkip = onSkipRest,
-                onStartCustomRest = { sec ->
-                    onStartCustomRest(sec)
-                },
+                onStartCustomRest = { sec -> onStartCustomRest(sec) },
                 onUpdateSettings = onUpdateRestSettings
             )
 
@@ -231,11 +263,14 @@ fun ActiveWorkoutScreen(
             }
 
             if (currentEntry != null && currentRecord != null) {
+                val targetSetsInt = currentEntry.targetSets.toInt().coerceAtLeast(1)
+                val displayedRowCount = maxOf(targetSetsInt + extraPlannedRows, currentRecord.sets.size)
+
                 FitTrackCard(
                     modifier = Modifier.fillMaxWidth(),
                     accentBorder = if (currentRecord.skipped) ext.warning else MaterialTheme.colorScheme.primary.copy(alpha = 0.45f)
                 ) {
-                    // Header with pose diagram & anatomy toggle
+                    // Header with pose diagram & target summary
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -251,9 +286,14 @@ fun ActiveWorkoutScreen(
                                 style = MaterialTheme.typography.titleLarge
                             )
                             Text(
-                                text = "${currentRecord.primaryMuscle} • ${currentRecord.equipment} • Target ${currentEntry.targetSets}×${currentEntry.repRangeMin}-${currentEntry.repRangeMax}",
+                                text = "${currentRecord.primaryMuscle} • ${currentRecord.equipment}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.secondary
+                            )
+                            Text(
+                                text = "Completed ${currentRecord.sets.size} / $targetSetsInt target sets (${currentEntry.repRangeMin}–${currentEntry.repRangeMax} reps)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             if (currentRecord.replacedFromExerciseName.isNotBlank()) {
                                 Text(
@@ -266,9 +306,17 @@ fun ActiveWorkoutScreen(
                     }
 
                     Spacer(modifier = Modifier.height(8.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(
+                            onClick = { showInstructions = !showInstructions },
+                            modifier = Modifier.testTag("toggle_instructions_button")
+                        ) {
+                            Icon(Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(if (showInstructions) "Hide Instructions" else "Instructions")
+                        }
                         TextButton(onClick = { showAnatomy = !showAnatomy }) {
-                            Text(if (showAnatomy) "Hide Anatomy" else "Target Anatomy")
+                            Text(if (showAnatomy) "Hide Anatomy" else "Anatomy")
                         }
                         TextButton(
                             onClick = {
@@ -288,6 +336,32 @@ fun ActiveWorkoutScreen(
                             Icon(Icons.Filled.SkipNext, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(if (currentRecord.skipped) "Unskip" else "Skip")
+                        }
+                    }
+
+                    if (showInstructions) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Surface(
+                            shape = MaterialTheme.shapes.small,
+                            color = ext.surfaceElevated,
+                            border = BorderStroke(1.dp, ext.border),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text("Exercise Instructions & Cues", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
+                                val steps = exerciseDef?.steps?.ifEmpty { listOf(exerciseDef.instructions) }
+                                    ?: listOf("Control the eccentric phase for 2 seconds, pause cleanly, and drive smoothly through the target range.")
+                                steps.forEachIndexed { stepIdx, stepText ->
+                                    Text("${stepIdx + 1}. $stepText", style = MaterialTheme.typography.bodySmall)
+                                }
+                                if (!exerciseDef?.techniqueGuidance.isNullOrBlank()) {
+                                    Text(
+                                        text = "Cue: ${exerciseDef?.techniqueGuidance}",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = ext.success
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -315,7 +389,7 @@ fun ActiveWorkoutScreen(
                             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     Icon(
-                                        Icons.Filled.TrendingUp,
+                                        Icons.AutoMirrored.Filled.TrendingUp,
                                         contentDescription = null,
                                         tint = if (progression.shouldDeload) ext.warning else ext.success,
                                         modifier = Modifier.size(18.dp)
@@ -356,58 +430,141 @@ fun ActiveWorkoutScreen(
                         }
                     }
 
-                    // Logged Sets List (Tap to Edit or Delete)
-                    if (currentRecord.sets.isNotEmpty()) {
-                        Spacer(modifier = Modifier.height(10.dp))
-                        Text("Logged Sets (${currentRecord.sets.size})", style = MaterialTheme.typography.labelLarge)
-                        Spacer(modifier = Modifier.height(4.dp))
-                        currentRecord.sets.forEachIndexed { setIdx, set ->
-                            Surface(
-                                shape = MaterialTheme.shapes.small,
-                                color = ext.surfaceElevated,
-                                border = BorderStroke(1.dp, ext.border),
+                    // Clear Set Table: Set | Previous | Target | Actual | Status
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Set Table", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                        TextButton(onClick = { extraPlannedRows += 1 }) {
+                            Text("+ Add Set")
+                        }
+                    }
+
+                    Surface(
+                        shape = MaterialTheme.shapes.small,
+                        color = ext.surfaceElevated,
+                        border = BorderStroke(1.dp, ext.border),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("active_set_table")
+                    ) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            // Header Row
+                            Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 3.dp)
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.08f))
+                                    .padding(horizontal = 8.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
+                                Text("Set", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(0.75f))
+                                Text("Previous", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f), textAlign = TextAlign.Center)
+                                Text("Target", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.1f), textAlign = TextAlign.Center)
+                                Text("Actual", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.15f), textAlign = TextAlign.Center)
+                                Text("Status", style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1.0f), textAlign = TextAlign.End)
+                            }
+                            HorizontalDivider(color = ext.border)
+
+                            val targetRepLabel = if (currentEntry.repRangeMin == currentEntry.repRangeMax) {
+                                "${currentEntry.repRangeMax}"
+                            } else {
+                                "${currentEntry.repRangeMin}-${currentEntry.repRangeMax}"
+                            }
+                            val targetCell = "${formatCompactWeight(currentEntry.targetWeightKg)}×$targetRepLabel"
+
+                            for (rowIdx in 0 until displayedRowCount) {
+                                val logged = currentRecord.sets.getOrNull(rowIdx)
+                                val prev = previousSetsForExercise.getOrNull(rowIdx)
+                                val prevCell = if (prev != null) "${formatCompactWeight(prev.weightKg)}×${prev.reps}" else "—"
+                                val isDone = logged != null
+                                val isNextActive = !isDone && rowIdx == currentRecord.sets.size
+
+                                val actualCell = if (logged != null) {
+                                    "${formatCompactWeight(logged.weightKg)}×${logged.reps}"
+                                } else {
+                                    "${formatCompactWeight(weightInput)}×$repsInput"
+                                }
+
+                                val setTagSuffix = when ((logged?.setType ?: selectedSetType).lowercase()) {
+                                    "warmup" -> "W"
+                                    "superset" -> "S"
+                                    "dropset" -> "D"
+                                    else -> ""
+                                }
+
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        StatusBadge(
-                                            text = set.setType.uppercase(),
-                                            tint = when (set.setType.lowercase()) {
-                                                "warmup" -> ext.warning
-                                                "superset" -> MaterialTheme.colorScheme.primary
-                                                "dropset" -> MaterialTheme.colorScheme.error
-                                                else -> ext.success
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(
+                                            when {
+                                                isDone -> ext.success.copy(alpha = 0.08f)
+                                                isNextActive -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+                                                else -> ext.surfaceElevated
                                             }
                                         )
-                                        Text(
-                                            text = "Set ${set.setNumber}: ${WorkoutAnalyticsEngine.formatWeight(set.weightKg)} × ${set.reps} reps",
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.SemiBold
-                                        )
-                                    }
-                                    Row {
-                                        IconButton(onClick = { editingSetPair = setIdx to set }) {
-                                            Icon(Icons.Filled.Edit, contentDescription = "Edit set", modifier = Modifier.size(18.dp))
+                                        .clickable {
+                                            if (logged != null) {
+                                                editingSetPair = rowIdx to logged
+                                            } else if (isNextActive) {
+                                                onLogSet(idx, selectedSetType, repsInput, weightInput, null)
+                                            }
                                         }
-                                        IconButton(onClick = { onDeleteLoggedSet(idx, setIdx) }) {
-                                            Icon(Icons.Filled.Delete, contentDescription = "Delete set", tint = MaterialTheme.colorScheme.error, modifier = Modifier.size(18.dp))
+                                        .padding(horizontal = 8.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (setTagSuffix.isEmpty()) "${rowIdx + 1}" else "${rowIdx + 1}$setTagSuffix",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.weight(0.75f)
+                                    )
+                                    Text(
+                                        text = prevCell,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.weight(1.1f)
+                                    )
+                                    Text(
+                                        text = targetCell,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.secondary,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.weight(1.1f)
+                                    )
+                                    Text(
+                                        text = actualCell,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = if (isDone || isNextActive) FontWeight.Bold else FontWeight.Normal,
+                                        textAlign = TextAlign.Center,
+                                        modifier = Modifier.weight(1.15f)
+                                    )
+                                    Row(
+                                        modifier = Modifier.weight(1.0f),
+                                        horizontalArrangement = Arrangement.End,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        if (isDone) {
+                                            StatusBadge(text = "Done", tint = ext.success)
+                                        } else if (isNextActive) {
+                                            StatusBadge(text = "Next", tint = MaterialTheme.colorScheme.primary)
+                                        } else {
+                                            StatusBadge(text = "Pending", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
+                                }
+                                if (rowIdx < displayedRowCount - 1) {
+                                    HorizontalDivider(color = ext.border.copy(alpha = 0.6f))
                                 }
                             }
                         }
                     }
 
-                    // Set Type & Load Input Matrix
+                    // Set Type & Weight/Reps Controls for Active Set
                     Spacer(modifier = Modifier.height(10.dp))
-                    Text("Next Set (${currentRecord.sets.size + 1})", style = MaterialTheme.typography.labelLarge)
-                    Spacer(modifier = Modifier.height(4.dp))
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         listOf(
                             "working" to "Working",
@@ -429,7 +586,7 @@ fun ActiveWorkoutScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        // Weight Stepper
+                        // Weight Stepper + Tap for exact keyboard input
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             IconButton(
                                 onClick = { weightInput = (weightInput - 2.5).coerceAtLeast(0.0) },
@@ -440,7 +597,8 @@ fun ActiveWorkoutScreen(
                             Text(
                                 text = WorkoutAnalyticsEngine.formatWeight(weightInput),
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { showDirectInputDialog = true }
                             )
                             IconButton(
                                 onClick = { weightInput += 2.5 },
@@ -449,7 +607,7 @@ fun ActiveWorkoutScreen(
                                 Icon(Icons.Filled.Add, contentDescription = "Increase weight")
                             }
                         }
-                        // Reps Stepper
+                        // Reps Stepper + Tap for exact keyboard input
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             IconButton(
                                 onClick = { repsInput = (repsInput - 1).coerceAtLeast(1) },
@@ -460,7 +618,8 @@ fun ActiveWorkoutScreen(
                             Text(
                                 text = "$repsInput reps",
                                 style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.clickable { showDirectInputDialog = true }
                             )
                             IconButton(
                                 onClick = { repsInput += 1 },
@@ -473,7 +632,7 @@ fun ActiveWorkoutScreen(
 
                     Spacer(modifier = Modifier.height(10.dp))
                     GradientButton(
-                        text = "Log Set ${currentRecord.sets.size + 1}",
+                        text = "Complete Set ${currentRecord.sets.size + 1}",
                         icon = Icons.Filled.Check,
                         onClick = {
                             onLogSet(idx, selectedSetType, repsInput, weightInput, null)
@@ -534,10 +693,10 @@ fun ActiveWorkoutScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     SecondaryButton(
-                        text = "Discard",
+                        text = "Cancel Workout",
                         onClick = { showDiscardDialog = true },
                         modifier = Modifier
-                            .weight(0.9f)
+                            .weight(0.95f)
                             .testTag("discard_workout_button")
                     )
                     Button(
@@ -545,21 +704,62 @@ fun ActiveWorkoutScreen(
                         colors = ButtonDefaults.buttonColors(containerColor = ext.success),
                         shape = MaterialTheme.shapes.medium,
                         modifier = Modifier
-                            .weight(1.3f)
+                            .weight(1.25f)
                             .height(52.dp)
                             .testTag("finish_workout_button")
                     ) {
-                        Text("Finish & Save", style = MaterialTheme.typography.titleMedium)
+                        Text("Finish Workout", style = MaterialTheme.typography.titleMedium)
                     }
                 }
             }
         }
     }
 
+    if (showDirectInputDialog) {
+        var wtText by remember { mutableStateOf(if (weightInput == 0.0) "" else weightInput.toString()) }
+        var rpText by remember { mutableStateOf(repsInput.toString()) }
+        AlertDialog(
+            onDismissRequest = { showDirectInputDialog = false },
+            title = { Text("Set Weight & Reps") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = wtText,
+                        onValueChange = { wtText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Weight (kg, 0 = Bodyweight)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true
+                    )
+                    OutlinedTextField(
+                        value = rpText,
+                        onValueChange = { rpText = it.filter(Char::isDigit) },
+                        label = { Text("Repetitions") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    weightInput = (wtText.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 600.0)
+                    repsInput = (rpText.toIntOrNull() ?: repsInput).coerceIn(1, 200)
+                    showDirectInputDialog = false
+                }) { Text("Apply") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDirectInputDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
     editingSetPair?.let { (setIdx, setRec) ->
         EditLoggedSetDialog(
             set = setRec,
             onDismiss = { editingSetPair = null },
+            onDelete = {
+                onDeleteLoggedSet(idx, setIdx)
+                editingSetPair = null
+            },
             onSave = { newType, newReps, newWeight ->
                 onUpdateLoggedSet(idx, setIdx, newType, newReps, newWeight)
                 editingSetPair = null
@@ -605,9 +805,9 @@ fun ActiveWorkoutScreen(
 
     if (showDiscardDialog) {
         ConfirmationModal(
-            title = "Discard Active Workout?",
+            title = "Cancel Active Workout?",
             message = "All sets logged in this session will be discarded permanently.",
-            confirmText = "Discard",
+            confirmText = "Cancel Workout",
             isDestructive = true,
             onConfirm = {
                 showDiscardDialog = false
@@ -623,6 +823,7 @@ fun ActiveWorkoutScreen(
 private fun EditLoggedSetDialog(
     set: CompletedSetRecord,
     onDismiss: () -> Unit,
+    onDelete: () -> Unit,
     onSave: (String, Int, Double) -> Unit
 ) {
     var setType by remember { mutableStateOf(set.setType) }
@@ -669,7 +870,12 @@ private fun EditLoggedSetDialog(
             }) { Text("Update Set") }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = onDelete) {
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
+                }
+                TextButton(onClick = onDismiss) { Text("Cancel") }
+            }
         }
     )
 }

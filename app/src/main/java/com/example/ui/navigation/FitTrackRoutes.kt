@@ -11,6 +11,7 @@ sealed interface FitTrackRoute {
     @Serializable data object Profile : FitTrackRoute
 
     // Secondary routes
+    @Serializable data class ActivityMap(val activityId: String? = null) : FitTrackRoute
     @Serializable data object AiCoach : FitTrackRoute
     @Serializable data object AiFoodScanner : FitTrackRoute
     @Serializable data object AiMealPlanner : FitTrackRoute

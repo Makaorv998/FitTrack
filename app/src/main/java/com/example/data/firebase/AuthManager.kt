@@ -8,7 +8,6 @@ import androidx.credentials.CredentialManager
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
-import com.example.R
 import com.google.android.libraries.identity.googleid.GetGoogleIdOption
 import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
 import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
@@ -37,9 +36,9 @@ object AuthManager {
             onAuthSuccess()
             return
         }
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
+        val clientIdRes = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        val clientId = if (clientIdRes != 0) context.getString(clientIdRes) else ""
+        if (clientId.isBlank()) {
             onUnauthenticated()
             return
         }
@@ -80,9 +79,9 @@ object AuthManager {
         onAuthError: (String) -> Unit,
         onAuthCancelled: () -> Unit
     ) {
-        val clientId = try {
-            context.getString(R.string.default_web_client_id)
-        } catch (_: Exception) {
+        val clientIdRes = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+        val clientId = if (clientIdRes != 0) context.getString(clientIdRes) else ""
+        if (clientId.isBlank()) {
             onAuthError("Google Sign-In configuration missing: default_web_client_id not found")
             return
         }

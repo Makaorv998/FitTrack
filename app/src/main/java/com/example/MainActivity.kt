@@ -62,12 +62,14 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
 import com.example.data.ai.FitTrackAiService
 import com.example.data.firebase.AuthManager
 import com.example.data.firebase.FitTrackRepository
 import com.example.data.firebase.configureAppCheck
 import com.example.platform.RestTimerAndSessionStore
 import com.example.platform.StepCounterManager
+import com.example.platform.UserPreferencesStore
 import com.example.ui.FitTrackViewModel
 import com.example.ui.components.AuroraAmbientBackground
 import com.example.ui.components.BottomNavTabItem
@@ -76,6 +78,7 @@ import com.example.ui.components.FloatingAIButton
 import com.example.ui.components.FloatingBottomNavigationBar
 import com.example.ui.components.SkeletonDashboard
 import com.example.ui.navigation.FitTrackRoute
+import com.example.ui.screens.ActivityMapScreen
 import com.example.ui.screens.ActivityScreen
 import com.example.ui.screens.AiCoachScreen
 import com.example.ui.screens.AiFoodScannerScreen
@@ -198,6 +201,7 @@ private fun AuthenticatedFitTrackShell(
                         aiService = FitTrackAiService(),
                         stepManager = StepCounterManager(appContext),
                         restSessionStore = RestTimerAndSessionStore(appContext),
+                        userPreferencesStore = UserPreferencesStore(appContext),
                         currentUserId = user.uid,
                         userEmail = user.email.orEmpty(),
                         userDisplayName = user.displayName.orEmpty(),
@@ -210,6 +214,11 @@ private fun AuthenticatedFitTrackShell(
 
     val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
     val profile by viewModel.userProfile.collectAsStateWithLifecycle()
+    val trainingPreferences by viewModel.trainingPreferences.collectAsStateWithLifecycle()
+    val nutritionPreferences by viewModel.nutritionPreferences.collectAsStateWithLifecycle()
+    val savedRecipes by viewModel.savedRecipes.collectAsStateWithLifecycle()
+    val plannedMeals by viewModel.plannedMeals.collectAsStateWithLifecycle()
+    val recentFoods by viewModel.recentFoods.collectAsStateWithLifecycle()
     val todaySteps by viewModel.todaySteps.collectAsStateWithLifecycle()
     val stepSensor by viewModel.stepSensorState.collectAsStateWithLifecycle()
     val stepRecords by viewModel.stepRecords.collectAsStateWithLifecycle()
@@ -411,6 +420,7 @@ private fun AuthenticatedFitTrackShell(
                                 HomeScreen(
                                     profile = profile,
                                     todaySteps = todaySteps,
+                                    stepRecords = stepRecords,
                                     meals = meals,
                                     waterLogs = waterLogs,
                                     gpsActivities = gpsHistory,
@@ -447,7 +457,10 @@ private fun AuthenticatedFitTrackShell(
                                     onResumeGps = { viewModel.resumeGpsTracking(context) },
                                     onFinishGps = { viewModel.finishAndSaveGpsTracking(context) },
                                     onDiscardGps = { viewModel.discardGpsTracking(context) },
-                                    onDeleteGpsActivity = { id -> viewModel.deleteGpsActivity(id) }
+                                    onDeleteGpsActivity = { id -> viewModel.deleteGpsActivity(id) },
+                                    onOpenReadOnlyMap = { activityId ->
+                                        navController.navigate(FitTrackRoute.ActivityMap(activityId))
+                                    }
                                 )
                             }
 
@@ -457,12 +470,30 @@ private fun AuthenticatedFitTrackShell(
                                     meals = meals,
                                     waterLogs = waterLogs,
                                     customFoods = customFoods,
+                                    recentFoods = recentFoods,
+                                    savedRecipes = savedRecipes,
+                                    plannedMeals = plannedMeals,
+                                    nutritionPreferences = nutritionPreferences,
                                     onLogFood = { food, grams, mealType -> viewModel.logFoodToMeal(food, grams, mealType) },
+                                    onLogFoodWithDate = { food, grams, mealType, dateKey ->
+                                        viewModel.logFoodToMeal(food, grams, mealType, dateKey = dateKey)
+                                    },
+                                    onLogDirectMeal = { meal, dateKey ->
+                                        viewModel.logDirectMeal(meal, dateKey = dateKey)
+                                    },
                                     onUpdateMealGrams = { meal, newGrams -> viewModel.updateMealGrams(meal, newGrams) },
                                     onDeleteMeal = { id -> viewModel.deleteMeal(id) },
                                     onSaveCustomFood = { food -> viewModel.saveCustomFood(food) },
                                     onToggleFavorite = { food -> viewModel.toggleFavoriteFood(food) },
                                     onAddWater = { amount -> viewModel.addWater(amount) },
+                                    onSaveNutritionPreferences = { viewModel.updateNutritionPreferences(it) },
+                                    onSaveRecipe = { viewModel.saveRecipe(it) },
+                                    onDeleteRecipe = { viewModel.deleteRecipe(it) },
+                                    onLogRecipe = { recipe, mealType, servings ->
+                                        viewModel.logRecipeToMeal(recipe, mealType, servings)
+                                    },
+                                    onSavePlannedMeal = { viewModel.savePlannedMeal(it) },
+                                    onDeletePlannedMeal = { viewModel.deletePlannedMeal(it) },
                                     onOpenAiScanner = { navController.navigate(FitTrackRoute.AiFoodScanner) },
                                     onOpenAiMealPlanner = { navController.navigate(FitTrackRoute.AiMealPlanner) }
                                 )
@@ -471,6 +502,7 @@ private fun AuthenticatedFitTrackShell(
                             composable<FitTrackRoute.Workouts> {
                                 WorkoutsScreen(
                                     profile = profile,
+                                    trainingPreferences = trainingPreferences,
                                     customPlans = workoutPlans,
                                     customPrograms = workoutPrograms,
                                     sessions = workoutSessions,
@@ -481,6 +513,15 @@ private fun AuthenticatedFitTrackShell(
                                     aiSubstitutionsState = aiSubstitutionsState,
                                     aiWorkoutAnalysisState = aiWorkoutAnalysisState,
                                     onStartWorkout = { viewModel.startActiveWorkout(it) },
+                                    onSelectActiveProgram = { program ->
+                                        viewModel.updateTrainingPreferences(
+                                            trainingPreferences.copy(
+                                                activeProgramId = program.id,
+                                                activeProgramName = program.name,
+                                                targetDaysPerWeek = program.daysPerWeek.toInt().coerceIn(1, 7)
+                                            )
+                                        )
+                                    },
                                     onToggleWorkoutPause = { viewModel.toggleWorkoutPause() },
                                     onSelectExerciseIndex = { viewModel.selectExerciseIndex(it) },
                                     onLogSet = { exIdx, setType, reps, weightKg, rest ->
@@ -536,14 +577,39 @@ private fun AuthenticatedFitTrackShell(
                             composable<FitTrackRoute.Profile> {
                                 ProfileScreen(
                                     profile = profile,
-                                    onSaveProfileGoals = { name, steps, water, cals, goal, sensorConsent, locationConsent ->
-                                        viewModel.updateProfileGoals(name, steps, water, cals, goal, sensorConsent, locationConsent)
+                                    trainingPreferences = trainingPreferences,
+                                    nutritionPreferences = nutritionPreferences,
+                                    onSavePersonalInfoAndGoals = { name, age, sex, height, weight, targetWeight, actLevel, steps, water, cals, goal ->
+                                        viewModel.updatePersonalInfoAndGoals(
+                                            displayName = name,
+                                            ageYears = age,
+                                            sex = sex,
+                                            heightCm = height,
+                                            weightKg = weight,
+                                            targetWeightKg = targetWeight,
+                                            activityLevel = actLevel,
+                                            stepGoal = steps,
+                                            waterGoalMl = water,
+                                            calorieGoal = cals,
+                                            goal = goal
+                                        )
                                     },
+                                    onSaveTrainingPreferences = { viewModel.updateTrainingPreferences(it) },
+                                    onSaveNutritionPreferences = { viewModel.updateNutritionPreferences(it) },
                                     onOpenBodyProgress = { navController.navigate(FitTrackRoute.BodyProgress) },
                                     onOpenCalculators = { navController.navigate(FitTrackRoute.Calculators) },
                                     onOpenChallenges = { navController.navigate(FitTrackRoute.Challenges) },
                                     onOpenAiCoach = { navController.navigate(FitTrackRoute.AiCoach) },
                                     onOpenSettings = { navController.navigate(FitTrackRoute.Settings) }
+                                )
+                            }
+
+                            composable<FitTrackRoute.ActivityMap> { entry ->
+                                val route = entry.toRoute<FitTrackRoute.ActivityMap>()
+                                ActivityMapScreen(
+                                    gpsHistory = gpsHistory,
+                                    initialActivityId = route.activityId,
+                                    onBack = { navController.popBackStack() }
                                 )
                             }
 
@@ -571,6 +637,7 @@ private fun AuthenticatedFitTrackShell(
                             composable<FitTrackRoute.AiMealPlanner> {
                                 AiMealPlannerScreen(
                                     state = aiMealPlanState,
+                                    nutritionPreferences = nutritionPreferences,
                                     onGenerate = { prefs, allergies -> viewModel.generateAiMealPlan(prefs, allergies) },
                                     onLogSuggestion = { meal -> viewModel.logDirectMeal(meal) },
                                     onBack = { navController.popBackStack() }

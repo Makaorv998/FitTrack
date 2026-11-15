@@ -153,6 +153,17 @@ data class WorkoutPlan(
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
+fun WorkoutPlan.estimatedDurationMinutes(): Int {
+    if (exercises.isEmpty()) return 0
+    val totalSeconds = exercises.sumOf { ex ->
+        val setCount = ex.targetSets.coerceAtLeast(1L)
+        val workSec = 40L * setCount
+        val restSec = ex.restSeconds.coerceAtLeast(15L) * (setCount - 1L).coerceAtLeast(1L)
+        workSec + restSec
+    }
+    return ((totalSeconds + 59L) / 60L).toInt().coerceAtLeast(10)
+}
+
 @IgnoreExtraProperties
 data class CompletedSetRecord(
     val setNumber: Long = 1L,

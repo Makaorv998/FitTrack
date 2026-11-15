@@ -1,6 +1,7 @@
 package com.example.ui.screens.workouts
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
@@ -60,7 +62,8 @@ import com.example.data.model.UserProfile
 import com.example.data.model.WorkoutExerciseEntry
 import com.example.data.model.WorkoutPlan
 import com.example.data.model.WorkoutProgram
-import com.example.platform.todayDateKey
+import com.example.data.model.estimatedDurationMinutes
+import com.example.platform.TrainingPreferences
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.FitTrackBottomSheet
 import com.example.ui.components.FitTrackCard
@@ -71,13 +74,28 @@ import com.example.ui.components.SectionHeader
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.LocalFitTrackColors
 
+private val PROGRAM_CATEGORY_FILTERS = listOf(
+    "all" to "All",
+    "full_body" to "Full Body",
+    "upper_lower" to "Upper / Lower",
+    "ppl" to "Push / Pull / Legs",
+    "bro_split" to "Bro Split",
+    "strength" to "Strength Training",
+    "hypertrophy" to "Muscle Building",
+    "beginner" to "Beginner Programs",
+    "home" to "Home Workouts",
+    "custom" to "Custom Programs"
+)
+
 @Composable
 fun WorkoutProgramsView(
     profile: UserProfile?,
+    trainingPreferences: TrainingPreferences,
     customPlans: List<WorkoutPlan>,
     customPrograms: List<WorkoutProgram>,
     onStartWorkout: (WorkoutPlan) -> Unit,
     onScheduleWorkoutForToday: (WorkoutPlan) -> Unit,
+    onSelectActiveProgram: (WorkoutProgram) -> Unit,
     onSavePlan: (WorkoutPlan) -> Unit,
     onDuplicatePlan: (WorkoutPlan) -> Unit,
     onDeletePlan: (String) -> Unit,
@@ -85,14 +103,29 @@ fun WorkoutProgramsView(
     onDeleteProgram: (String) -> Unit,
     onOpenAiPlanner: () -> Unit
 ) {
-    val ext = LocalFitTrackColors.current
     val personalizedPrograms = remember(profile) {
         WorkoutCatalog.personalizedProgramsForUser(profile)
     }
+    var selectedCategory by remember { mutableStateOf("all") }
     var builderPlan by remember { mutableStateOf<WorkoutPlan?>(null) }
     var showBuilderSheet by remember { mutableStateOf(false) }
+    var editingProgram by remember { mutableStateOf<WorkoutProgram?>(null) }
     var showProgramCreator by remember { mutableStateOf(false) }
     var expandedProgramId by remember { mutableStateOf<String?>(personalizedPrograms.firstOrNull()?.id) }
+
+    val filteredCustomPrograms = remember(customPrograms, selectedCategory) {
+        when (selectedCategory) {
+            "all", "custom" -> customPrograms
+            else -> customPrograms.filter { it.category.equals(selectedCategory, ignoreCase = true) }
+        }
+    }
+    val filteredPersonalizedPrograms = remember(personalizedPrograms, selectedCategory) {
+        when (selectedCategory) {
+            "all" -> personalizedPrograms
+            "custom" -> emptyList()
+            else -> personalizedPrograms.filter { it.category.equals(selectedCategory, ignoreCase = true) }
+        }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -118,7 +151,10 @@ fun WorkoutProgramsView(
                 SecondaryButton(
                     text = "New Program",
                     icon = Icons.Filled.Add,
-                    onClick = { showProgramCreator = true },
+                    onClick = {
+                        editingProgram = null
+                        showProgramCreator = true
+                    },
                     modifier = Modifier
                         .weight(1f)
                         .testTag("programs_new_program_button")
@@ -126,132 +162,216 @@ fun WorkoutProgramsView(
             }
         }
 
-        // Custom Programs
-        if (customPrograms.isNotEmpty()) {
-            item {
-                SectionHeader(title = "My Custom Programs (${customPrograms.size})")
-            }
-            items(customPrograms, key = { it.id }) { prog ->
-                ProgramCard(
-                    program = prog,
-                    expanded = expandedProgramId == prog.id,
-                    onToggleExpand = {
-                        expandedProgramId = if (expandedProgramId == prog.id) null else prog.id
-                    },
-                    onStartWorkout = onStartWorkout,
-                    onScheduleWorkoutForToday = onScheduleWorkoutForToday,
-                    onDeleteProgram = { onDeleteProgram(prog.id) }
-                )
-            }
-        }
-
-        // Custom Workouts
+        // Program Category Filters (9 required categories + All)
         item {
-            SectionHeader(
-                title = "My Custom Workouts (${customPlans.size})",
-                actionLabel = "AI Planner",
-                onAction = onOpenAiPlanner
-            )
-        }
-        if (customPlans.isEmpty()) {
-            item {
-                EmptyStateCard(
-                    icon = Icons.Filled.AutoAwesome,
-                    title = "No custom workouts yet",
-                    subtitle = "Create a custom routine with supersets, drop sets, and custom rest timers or generate one with AI.",
-                    actionLabel = "Create Custom Workout",
-                    onAction = {
-                        builderPlan = null
-                        showBuilderSheet = true
-                    }
-                )
-            }
-        } else {
-            items(customPlans, key = { it.id }) { plan ->
-                FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(modifier = Modifier.weight(1f)) {
-                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                StatusBadge(text = plan.level.uppercase(), tint = MaterialTheme.colorScheme.secondary)
-                                if (plan.isAiGenerated) {
-                                    StatusBadge(text = "AI", tint = MaterialTheme.colorScheme.primary)
-                                }
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Text(plan.name, style = MaterialTheme.typography.titleLarge)
-                            Text(
-                                "${plan.exercises.size} exercises • ${plan.targetGoal.replace("_", " ")}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        Row {
-                            IconButton(onClick = {
-                                builderPlan = plan
-                                showBuilderSheet = true
-                            }) {
-                                Icon(Icons.Filled.Edit, contentDescription = "Edit workout")
-                            }
-                            IconButton(onClick = { onDuplicatePlan(plan) }) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicate workout")
-                            }
-                            IconButton(onClick = { onDeletePlan(plan.id) }) {
-                                Icon(Icons.Filled.Delete, contentDescription = "Delete workout", tint = MaterialTheme.colorScheme.error)
-                            }
-                        }
-                    }
-                    Spacer(modifier = Modifier.height(8.dp))
-                    plan.exercises.take(5).forEach { ex ->
-                        Text(
-                            text = "• ${ex.exerciseName}: ${ex.targetSets} × ${ex.repRangeMin}-${ex.repRangeMax} (${ex.restSeconds}s)",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(10.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        GradientButton(
-                            text = "Start",
-                            icon = Icons.Filled.PlayArrow,
-                            onClick = { onStartWorkout(plan) },
-                            modifier = Modifier.weight(1f)
-                        )
-                        SecondaryButton(
-                            text = "Today",
-                            icon = Icons.Filled.CalendarToday,
-                            onClick = { onScheduleWorkoutForToday(plan) },
-                            modifier = Modifier.weight(0.75f)
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Program Categories", style = MaterialTheme.typography.labelLarge)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    PROGRAM_CATEGORY_FILTERS.forEach { (key, label) ->
+                        FilterChip(
+                            selected = selectedCategory == key,
+                            onClick = { selectedCategory = key },
+                            label = { Text(label) },
+                            modifier = Modifier.testTag("program_category_chip_$key")
                         )
                     }
                 }
             }
         }
 
-        // Personalized Structured Programs (8 curated programs)
-        item {
-            SectionHeader(title = "Personalized Training Programs (${personalizedPrograms.size})")
-            Spacer(modifier = Modifier.height(2.dp))
-            Text(
-                text = "Sets and rest intervals adapted to your age, goal, and activity profile.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+        // Custom Programs
+        if (filteredCustomPrograms.isNotEmpty() || selectedCategory == "custom") {
+            item {
+                SectionHeader(
+                    title = "Custom Programs (${filteredCustomPrograms.size})",
+                    actionLabel = "+ New",
+                    onAction = {
+                        editingProgram = null
+                        showProgramCreator = true
+                    }
+                )
+            }
+            if (filteredCustomPrograms.isEmpty()) {
+                item {
+                    EmptyStateCard(
+                        icon = Icons.Filled.Add,
+                        title = "No custom programs yet",
+                        subtitle = "Combine your workouts into a reusable multi-day split or duplicate any preset program.",
+                        actionLabel = "Create Custom Program",
+                        onAction = {
+                            editingProgram = null
+                            showProgramCreator = true
+                        }
+                    )
+                }
+            } else {
+                items(filteredCustomPrograms, key = { it.id }) { prog ->
+                    val isActive = trainingPreferences.activeProgramId == prog.id ||
+                        (trainingPreferences.activeProgramName.isNotBlank() &&
+                            trainingPreferences.activeProgramName.equals(prog.name, ignoreCase = true))
+                    ProgramCard(
+                        program = prog,
+                        isActiveProgram = isActive,
+                        expanded = expandedProgramId == prog.id,
+                        onToggleExpand = {
+                            expandedProgramId = if (expandedProgramId == prog.id) null else prog.id
+                        },
+                        onSelectActiveProgram = { onSelectActiveProgram(prog) },
+                        onStartWorkout = onStartWorkout,
+                        onScheduleWorkoutForToday = onScheduleWorkoutForToday,
+                        onDuplicateProgram = {
+                            onSaveProgram(
+                                prog.copy(
+                                    id = "",
+                                    name = "${prog.name} (Copy)",
+                                    category = "custom",
+                                    isCustom = true
+                                )
+                            )
+                        },
+                        onEditProgram = {
+                            editingProgram = prog
+                            showProgramCreator = true
+                        },
+                        onDeleteProgram = { onDeleteProgram(prog.id) }
+                    )
+                }
+            }
         }
-        items(personalizedPrograms, key = { it.id }) { prog ->
-            ProgramCard(
-                program = prog,
-                expanded = expandedProgramId == prog.id,
-                onToggleExpand = {
-                    expandedProgramId = if (expandedProgramId == prog.id) null else prog.id
-                },
-                onStartWorkout = onStartWorkout,
-                onScheduleWorkoutForToday = onScheduleWorkoutForToday,
-                onDeleteProgram = null
-            )
+
+        // Custom Workouts
+        if (selectedCategory == "all" || selectedCategory == "custom") {
+            item {
+                SectionHeader(
+                    title = "My Custom Workouts (${customPlans.size})",
+                    actionLabel = "AI Planner",
+                    onAction = onOpenAiPlanner
+                )
+            }
+            if (customPlans.isEmpty()) {
+                item {
+                    EmptyStateCard(
+                        icon = Icons.Filled.AutoAwesome,
+                        title = "No custom workouts yet",
+                        subtitle = "Create a custom routine with target weights, notes, supersets, and custom rest timers or generate one with AI.",
+                        actionLabel = "Create Custom Workout",
+                        onAction = {
+                            builderPlan = null
+                            showBuilderSheet = true
+                        }
+                    )
+                }
+            } else {
+                items(customPlans, key = { it.id }) { plan ->
+                    FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    StatusBadge(text = plan.level.uppercase(), tint = MaterialTheme.colorScheme.secondary)
+                                    if (plan.isAiGenerated) {
+                                        StatusBadge(text = "AI", tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(plan.name, style = MaterialTheme.typography.titleLarge)
+                                Text(
+                                    "${plan.exercises.size} exercises • ~${plan.estimatedDurationMinutes()} min • ${plan.targetGoal.replace("_", " ")}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Row {
+                                IconButton(onClick = {
+                                    builderPlan = plan
+                                    showBuilderSheet = true
+                                }) {
+                                    Icon(Icons.Filled.Edit, contentDescription = "Edit workout")
+                                }
+                                IconButton(onClick = { onDuplicatePlan(plan) }) {
+                                    Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicate workout")
+                                }
+                                IconButton(onClick = { onDeletePlan(plan.id) }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Delete workout", tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        plan.exercises.take(5).forEach { ex ->
+                            val wt = if (ex.targetWeightKg > 0.0) " @ ${ex.targetWeightKg.toInt()} kg" else ""
+                            Text(
+                                text = "• ${ex.exerciseName}: ${ex.targetSets} × ${ex.repRangeMin}-${ex.repRangeMax}$wt (${ex.restSeconds}s)",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            GradientButton(
+                                text = "Start",
+                                icon = Icons.Filled.PlayArrow,
+                                onClick = { onStartWorkout(plan) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            SecondaryButton(
+                                text = "Today",
+                                icon = Icons.Filled.CalendarToday,
+                                onClick = { onScheduleWorkoutForToday(plan) },
+                                modifier = Modifier.weight(0.75f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Personalized Structured Programs
+        if (filteredPersonalizedPrograms.isNotEmpty()) {
+            item {
+                SectionHeader(title = "Training Programs (${filteredPersonalizedPrograms.size})")
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(
+                    text = "Sets and rest intervals adapted to your age, goal, and activity profile. Duplicate any program to customize it.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            items(filteredPersonalizedPrograms, key = { it.id }) { prog ->
+                val isActive = trainingPreferences.activeProgramId == prog.id ||
+                    (trainingPreferences.activeProgramName.isNotBlank() &&
+                        trainingPreferences.activeProgramName.equals(prog.name, ignoreCase = true))
+                ProgramCard(
+                    program = prog,
+                    isActiveProgram = isActive,
+                    expanded = expandedProgramId == prog.id,
+                    onToggleExpand = {
+                        expandedProgramId = if (expandedProgramId == prog.id) null else prog.id
+                    },
+                    onSelectActiveProgram = { onSelectActiveProgram(prog) },
+                    onStartWorkout = onStartWorkout,
+                    onScheduleWorkoutForToday = onScheduleWorkoutForToday,
+                    onDuplicateProgram = {
+                        onSaveProgram(
+                            prog.copy(
+                                id = "",
+                                name = "${prog.name} (Custom)",
+                                category = "custom",
+                                isCustom = true
+                            )
+                        )
+                    },
+                    onEditProgram = null,
+                    onDeleteProgram = null
+                )
+            }
         }
     }
 
@@ -262,12 +382,18 @@ fun WorkoutProgramsView(
             onSave = { saved ->
                 onSavePlan(saved)
                 showBuilderSheet = false
+            },
+            onSaveAndScheduleToday = { saved ->
+                onSavePlan(saved)
+                onScheduleWorkoutForToday(saved)
+                showBuilderSheet = false
             }
         )
     }
 
     if (showProgramCreator) {
         ProgramCreatorDialog(
+            initialProgram = editingProgram,
             availablePlans = customPlans + WorkoutCatalog.starterTemplatesForUser(profile),
             onDismiss = { showProgramCreator = false },
             onSave = { prog ->
@@ -282,17 +408,25 @@ fun WorkoutProgramsView(
 @Composable
 private fun ProgramCard(
     program: WorkoutProgram,
+    isActiveProgram: Boolean,
     expanded: Boolean,
     onToggleExpand: () -> Unit,
+    onSelectActiveProgram: () -> Unit,
     onStartWorkout: (WorkoutPlan) -> Unit,
     onScheduleWorkoutForToday: (WorkoutPlan) -> Unit,
+    onDuplicateProgram: () -> Unit,
+    onEditProgram: (() -> Unit)?,
     onDeleteProgram: (() -> Unit)?
 ) {
     val ext = LocalFitTrackColors.current
     GlassCard(
         modifier = Modifier.fillMaxWidth(),
         onClick = onToggleExpand,
-        accentBorder = if (expanded) MaterialTheme.colorScheme.primary.copy(alpha = 0.6f) else ext.border
+        accentBorder = when {
+            isActiveProgram -> ext.success
+            expanded -> MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            else -> ext.border
+        }
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -306,6 +440,9 @@ private fun ProgramCard(
                     if (program.isCustom) {
                         StatusBadge(text = "CUSTOM", tint = ext.success)
                     }
+                    if (isActiveProgram) {
+                        StatusBadge(text = "ACTIVE", tint = ext.success)
+                    }
                 }
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(program.name, style = MaterialTheme.typography.titleLarge)
@@ -316,16 +453,35 @@ private fun ProgramCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            if (onDeleteProgram != null) {
-                IconButton(onClick = onDeleteProgram) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete program", tint = MaterialTheme.colorScheme.error)
+            Row {
+                IconButton(onClick = onDuplicateProgram) {
+                    Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicate program")
+                }
+                if (onEditProgram != null) {
+                    IconButton(onClick = onEditProgram) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit program")
+                    }
+                }
+                if (onDeleteProgram != null) {
+                    IconButton(onClick = onDeleteProgram) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Delete program", tint = MaterialTheme.colorScheme.error)
+                    }
                 }
             }
         }
 
         if (expanded) {
             Spacer(modifier = Modifier.height(10.dp))
+            OutlinedButton(
+                onClick = onSelectActiveProgram,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Filled.CheckCircle, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.width(6.dp))
+                Text(if (isActiveProgram) "Current Active Program" else "Set as Current Program")
+            }
             if (program.weeklySplit.isNotEmpty()) {
+                Spacer(modifier = Modifier.height(8.dp))
                 Text("Weekly Split", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                 Spacer(modifier = Modifier.height(4.dp))
                 program.weeklySplit.forEach { split ->
@@ -393,7 +549,8 @@ private fun ProgramCard(
 fun WorkoutBuilderSheet(
     initialPlan: WorkoutPlan?,
     onDismiss: () -> Unit,
-    onSave: (WorkoutPlan) -> Unit
+    onSave: (WorkoutPlan) -> Unit,
+    onSaveAndScheduleToday: ((WorkoutPlan) -> Unit)? = null
 ) {
     val ext = LocalFitTrackColors.current
     var name by remember { mutableStateOf(initialPlan?.name ?: "Custom Athletic Split") }
@@ -415,6 +572,14 @@ fun WorkoutBuilderSheet(
                 ex.equipment.contains(search, ignoreCase = true)
         }
     }
+
+    fun buildPlan(): WorkoutPlan = (initialPlan ?: WorkoutPlan()).copy(
+        name = name.trim(),
+        level = level,
+        targetGoal = targetGoal,
+        progressionNote = progressionNote.trim(),
+        exercises = entries.toList()
+    )
 
     FitTrackBottomSheet(onDismissRequest = onDismiss) {
         Column(
@@ -479,6 +644,13 @@ fun WorkoutBuilderSheet(
                                 Row {
                                     IconButton(
                                         onClick = {
+                                            entries.add(idx + 1, item.copy())
+                                        }
+                                    ) {
+                                        Icon(Icons.Filled.ContentCopy, contentDescription = "Duplicate exercise")
+                                    }
+                                    IconButton(
+                                        onClick = {
                                             if (idx > 0) {
                                                 val moved = entries.removeAt(idx)
                                                 entries.add(idx - 1, moved)
@@ -514,7 +686,7 @@ fun WorkoutBuilderSheet(
                                     label = { Text("Sets") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     singleLine = true,
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier.weight(0.9f)
                                 )
                                 OutlinedTextField(
                                     value = item.repRangeMin.toString(),
@@ -525,7 +697,7 @@ fun WorkoutBuilderSheet(
                                     label = { Text("Min") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     singleLine = true,
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier.weight(0.9f)
                                 )
                                 OutlinedTextField(
                                     value = item.repRangeMax.toString(),
@@ -536,6 +708,21 @@ fun WorkoutBuilderSheet(
                                     label = { Text("Max") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     singleLine = true,
+                                    modifier = Modifier.weight(0.9f)
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedTextField(
+                                    value = if (item.targetWeightKg <= 0.0) "" else if (item.targetWeightKg % 1.0 == 0.0) item.targetWeightKg.toInt().toString() else item.targetWeightKg.toString(),
+                                    onValueChange = { v ->
+                                        val clean = v.filter { it.isDigit() || it == '.' }
+                                        val w = clean.toDoubleOrNull() ?: 0.0
+                                        entries[idx] = item.copy(targetWeightKg = w.coerceIn(0.0, 500.0))
+                                    },
+                                    label = { Text("Target kg") },
+                                    placeholder = { Text("BW / 0") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                                    singleLine = true,
                                     modifier = Modifier.weight(1f)
                                 )
                                 OutlinedTextField(
@@ -544,12 +731,19 @@ fun WorkoutBuilderSheet(
                                         val rs = v.filter(Char::isDigit).toLongOrNull() ?: 60L
                                         entries[idx] = item.copy(restSeconds = rs.coerceIn(15L, 300L))
                                     },
-                                    label = { Text("Rest s") },
+                                    label = { Text("Rest (s)") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                                     singleLine = true,
                                     modifier = Modifier.weight(1f)
                                 )
                             }
+                            OutlinedTextField(
+                                value = item.notes,
+                                onValueChange = { entries[idx] = item.copy(notes = it) },
+                                label = { Text("Exercise notes (tempo, cue, pin #)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth()
+                            )
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf("working", "warmup", "superset", "dropset").forEach { st ->
                                     FilterChip(
@@ -621,40 +815,55 @@ fun WorkoutBuilderSheet(
             GradientButton(
                 text = if (initialPlan == null) "Save Custom Workout" else "Update Workout",
                 enabled = name.isNotBlank() && entries.isNotEmpty(),
-                onClick = {
-                    onSave(
-                        (initialPlan ?: WorkoutPlan()).copy(
-                            name = name.trim(),
-                            level = level,
-                            targetGoal = targetGoal,
-                            progressionNote = progressionNote.trim(),
-                            exercises = entries.toList()
-                        )
-                    )
-                },
+                onClick = { onSave(buildPlan()) },
                 modifier = Modifier
                     .fillMaxWidth()
                     .testTag("builder_save_workout_button")
             )
+            if (onSaveAndScheduleToday != null) {
+                SecondaryButton(
+                    text = "Save & Schedule for Today",
+                    icon = Icons.Filled.CalendarToday,
+                    onClick = {
+                        if (name.isNotBlank() && entries.isNotEmpty()) {
+                            onSaveAndScheduleToday(buildPlan())
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
             Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProgramCreatorDialog(
+    initialProgram: WorkoutProgram? = null,
     availablePlans: List<WorkoutPlan>,
     onDismiss: () -> Unit,
     onSave: (WorkoutProgram) -> Unit
 ) {
-    var name by remember { mutableStateOf("My 3-Day Strength Split") }
-    var description by remember { mutableStateOf("Custom multi-day rotation with tracked progressive overload.") }
-    var daysPerWeek by remember { mutableIntStateOf(3) }
-    val selectedPlanIds = remember { mutableStateListOf<String>() }
+    var name by remember(initialProgram?.id) {
+        mutableStateOf(initialProgram?.name ?: "My 3-Day Strength Split")
+    }
+    var description by remember(initialProgram?.id) {
+        mutableStateOf(initialProgram?.description ?: "Custom multi-day rotation with tracked progressive overload.")
+    }
+    val initialSelectedIds = remember(initialProgram?.id) {
+        initialProgram?.workouts?.mapNotNull { it.id.ifBlank { null } } ?: emptyList()
+    }
+    val selectedPlanIds = remember(initialProgram?.id) {
+        mutableStateListOf<String>().apply { addAll(initialSelectedIds) }
+    }
+    var daysPerWeek by remember(initialProgram?.id) {
+        mutableIntStateOf((initialProgram?.daysPerWeek?.toInt() ?: selectedPlanIds.size).coerceIn(1, 7))
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Custom Program") },
+        title = { Text(if (initialProgram == null) "Create Custom Program" else "Edit Custom Program") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -663,16 +872,18 @@ private fun ProgramCreatorDialog(
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Program Name") }, singleLine = true)
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Description") })
                 Text("Select Workout Days (${selectedPlanIds.size}):", style = MaterialTheme.typography.labelLarge)
-                availablePlans.distinctBy { it.name }.take(10).forEach { plan ->
-                    val checked = plan.id in selectedPlanIds
-                    FilterChip(
-                        selected = checked,
-                        onClick = {
-                            if (checked) selectedPlanIds.remove(plan.id) else selectedPlanIds.add(plan.id)
-                            daysPerWeek = selectedPlanIds.size.coerceIn(1, 7)
-                        },
-                        label = { Text(plan.name) }
-                    )
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    availablePlans.distinctBy { it.name }.take(12).forEach { plan ->
+                        val checked = plan.id in selectedPlanIds
+                        FilterChip(
+                            selected = checked,
+                            onClick = {
+                                if (checked) selectedPlanIds.remove(plan.id) else selectedPlanIds.add(plan.id)
+                                daysPerWeek = selectedPlanIds.size.coerceIn(1, 7)
+                            },
+                            label = { Text(plan.name) }
+                        )
+                    }
                 }
             }
         },
@@ -682,20 +893,22 @@ private fun ProgramCreatorDialog(
                 onClick = {
                     val chosen = availablePlans.filter { it.id in selectedPlanIds }
                     onSave(
-                        WorkoutProgram(
+                        (initialProgram ?: WorkoutProgram()).copy(
                             name = name.trim(),
                             category = "custom",
                             level = chosen.firstOrNull()?.level ?: "intermediate",
                             daysPerWeek = daysPerWeek.toLong(),
                             description = description.trim(),
                             weeklySplit = chosen.mapIndexed { i, p -> "Day ${i + 1}: ${p.name}" },
-                            progressionGuidance = "Aim for +1 rep or +2.5 kg when top reps feel clean.",
+                            progressionGuidance = initialProgram?.progressionGuidance?.ifBlank {
+                                "Aim for +1 rep or +2.5 kg when top reps feel clean."
+                            } ?: "Aim for +1 rep or +2.5 kg when top reps feel clean.",
                             workouts = chosen,
                             isCustom = true
                         )
                     )
                 }
-            ) { Text("Create Program") }
+            ) { Text(if (initialProgram == null) "Create Program" else "Save Changes") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
