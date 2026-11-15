@@ -1,0 +1,389 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Authenticated user fitness profile, targets, preferences, and consent settings.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "displayName": { "type": "string" },
+        "email": { "type": "string" },
+        "photoUrl": { "type": "string" },
+        "ageYears": { "type": "integer" },
+        "sex": { "type": "string", "enum": ["male", "female", "other"] },
+        "heightCm": { "type": "number" },
+        "weightKg": { "type": "number" },
+        "targetWeightKg": { "type": "number" },
+        "activityLevel": { "type": "string", "enum": ["sedentary", "light", "moderate", "active", "very_active"] },
+        "goal": { "type": "string", "enum": ["weight_loss", "muscle_gain", "general_fitness", "weight_maintenance"] },
+        "dailyStepGoal": { "type": "integer" },
+        "dailyWaterTargetMl": { "type": "integer" },
+        "dailyCalorieTarget": { "type": "integer" },
+        "onboardingCompleted": { "type": "boolean" },
+        "unitSystem": { "type": "string", "enum": ["metric", "imperial"] },
+        "themePreference": { "type": "string", "enum": ["system", "dark", "light"] },
+        "sensorConsentGranted": { "type": "boolean" },
+        "locationConsentGranted": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp set via FieldValue.serverTimestamp()" },
+        "updatedAt": { "type": "string", "format": "date-time", "description": "Server timestamp set via FieldValue.serverTimestamp()" }
+      },
+      "required": ["userId", "displayName", "ageYears", "sex", "heightCm", "weightKg", "targetWeightKg", "activityLevel", "goal", "dailyStepGoal", "dailyWaterTargetMl", "dailyCalorieTarget", "onboardingCompleted", "unitSystem", "themePreference", "sensorConsentGranted", "locationConsentGranted", "createdAt", "updatedAt"]
+    },
+    "StepRecord": {
+      "title": "StepRecord",
+      "description": "Daily hardware and manual step tracking summary keyed by yyyy-MM-dd.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "steps": { "type": "integer" },
+        "manualSteps": { "type": "integer" },
+        "sensorBaseline": { "type": "integer" },
+        "distanceKm": { "type": "number" },
+        "caloriesBurned": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "steps", "manualSteps", "sensorBaseline", "distanceKm", "caloriesBurned", "createdAt", "updatedAt"]
+    },
+    "GpsActivity": {
+      "title": "GpsActivity",
+      "description": "Tracked walking, running, or cycling GPS workout session.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "activityType": { "type": "string", "enum": ["walking", "running", "cycling"] },
+        "durationSeconds": { "type": "integer" },
+        "distanceKm": { "type": "number" },
+        "avgSpeedKmh": { "type": "number" },
+        "avgPaceMinPerKm": { "type": "number" },
+        "caloriesBurned": { "type": "number" },
+        "routePoints": { "type": "array" },
+        "notes": { "type": "string" },
+        "startedAtMs": { "type": "integer" },
+        "endedAtMs": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "activityType", "durationSeconds", "distanceKm", "avgSpeedKmh", "avgPaceMinPerKm", "caloriesBurned", "routePoints", "notes", "startedAtMs", "endedAtMs", "createdAt", "updatedAt"]
+    },
+    "FoodItem": {
+      "title": "FoodItem",
+      "description": "User custom or favorited food nutrition item.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "brand": { "type": "string" },
+        "servingSizeGrams": { "type": "number" },
+        "servingLabel": { "type": "string" },
+        "caloriesPer100g": { "type": "number" },
+        "proteinPer100g": { "type": "number" },
+        "carbsPer100g": { "type": "number" },
+        "fatPer100g": { "type": "number" },
+        "fiberPer100g": { "type": "number" },
+        "sugarPer100g": { "type": "number" },
+        "isFavorite": { "type": "boolean" },
+        "isCustom": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "servingSizeGrams", "servingLabel", "caloriesPer100g", "proteinPer100g", "carbsPer100g", "fatPer100g", "fiberPer100g", "sugarPer100g", "isFavorite", "isCustom", "createdAt", "updatedAt"]
+    },
+    "MealLog": {
+      "title": "MealLog",
+      "description": "Logged meal item with macros and calories.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "mealType": { "type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"] },
+        "foodName": { "type": "string" },
+        "grams": { "type": "number" },
+        "calories": { "type": "number" },
+        "proteinG": { "type": "number" },
+        "carbsG": { "type": "number" },
+        "fatG": { "type": "number" },
+        "fiberG": { "type": "number" },
+        "sugarG": { "type": "number" },
+        "source": { "type": "string", "enum": ["manual", "ai_scan", "ai_plan"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "mealType", "foodName", "grams", "calories", "proteinG", "carbsG", "fatG", "fiberG", "sugarG", "source", "createdAt", "updatedAt"]
+    },
+    "WaterLog": {
+      "title": "WaterLog",
+      "description": "Daily hydration intake entry in milliliters.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "amountMl": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "amountMl", "createdAt"]
+    },
+    "WorkoutPlan": {
+      "title": "WorkoutPlan",
+      "description": "Custom or AI-generated workout template with exercises.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "level": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "targetGoal": { "type": "string" },
+        "programId": { "type": "string" },
+        "programName": { "type": "string" },
+        "dayLabel": { "type": "string" },
+        "progressionNote": { "type": "string" },
+        "exercises": { "type": "array" },
+        "isAiGenerated": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "level", "targetGoal", "exercises", "isAiGenerated", "createdAt", "updatedAt"]
+    },
+    "WorkoutSessionLog": {
+      "title": "WorkoutSessionLog",
+      "description": "Completed strength or conditioning workout history log.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "workoutId": { "type": "string" },
+        "workoutName": { "type": "string" },
+        "programId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "notes": { "type": "string" },
+        "durationSeconds": { "type": "integer" },
+        "totalVolumeKg": { "type": "number" },
+        "warmupVolumeKg": { "type": "number" },
+        "workingVolumeKg": { "type": "number" },
+        "caloriesBurned": { "type": "number" },
+        "setsCompleted": { "type": "integer" },
+        "personalRecordsHit": { "type": "integer" },
+        "completedSetsSummary": { "type": "array" },
+        "exerciseRecords": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "workoutId", "workoutName", "durationSeconds", "totalVolumeKg", "caloriesBurned", "setsCompleted", "personalRecordsHit", "completedSetsSummary", "createdAt"]
+    },
+    "WorkoutProgram": {
+      "title": "WorkoutProgram",
+      "description": "Multi-day structured training program.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "goal": { "type": "string" },
+        "level": { "type": "string", "enum": ["beginner", "intermediate", "advanced"] },
+        "daysPerWeek": { "type": "integer" },
+        "description": { "type": "string" },
+        "weeklySplit": { "type": "array" },
+        "progressionGuidance": { "type": "string" },
+        "workouts": { "type": "array" },
+        "isCustom": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "category", "goal", "level", "daysPerWeek", "description", "weeklySplit", "progressionGuidance", "workouts", "isCustom", "createdAt", "updatedAt"]
+    },
+    "WorkoutScheduleItem": {
+      "title": "WorkoutScheduleItem",
+      "description": "Calendar schedule entry for planned, completed, rest, or missed workouts.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "workoutId": { "type": "string" },
+        "workoutName": { "type": "string" },
+        "programId": { "type": "string" },
+        "status": { "type": "string", "enum": ["scheduled", "completed", "rest", "missed"] },
+        "notes": { "type": "string" },
+        "completedSessionId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "workoutId", "workoutName", "programId", "status", "notes", "completedSessionId", "createdAt", "updatedAt"]
+    },
+    "PersonalRecord": {
+      "title": "PersonalRecord",
+      "description": "Exercise personal record (weight, reps, estimated 1RM).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "exerciseId": { "type": "string" },
+        "exerciseName": { "type": "string" },
+        "primaryMuscle": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "reps": { "type": "integer" },
+        "estimatedOneRmKg": { "type": "number" },
+        "setVolumeKg": { "type": "number" },
+        "dateKey": { "type": "string" },
+        "sessionId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "exerciseId", "exerciseName", "primaryMuscle", "weightKg", "reps", "estimatedOneRmKg", "setVolumeKg", "dateKey", "sessionId", "createdAt"]
+    },
+    "TrainingNote": {
+      "title": "TrainingNote",
+      "description": "User training note or technique cue memo.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "exerciseName": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "body", "dateKey", "exerciseName", "createdAt", "updatedAt"]
+    },
+    "WeightRecord": {
+      "title": "WeightRecord",
+      "description": "Body weight log entry.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "note": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "weightKg", "note", "createdAt"]
+    },
+    "BodyMeasurement": {
+      "title": "BodyMeasurement",
+      "description": "Body circumference measurement entry in centimeters.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "waistCm": { "type": "number" },
+        "chestCm": { "type": "number" },
+        "armsCm": { "type": "number" },
+        "legsCm": { "type": "number" },
+        "hipsCm": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dateKey", "waistCm", "chestCm", "armsCm", "legsCm", "hipsCm", "createdAt"]
+    },
+    "UserChallenge": {
+      "title": "UserChallenge",
+      "description": "Fitness challenge participation and progress.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "category": { "type": "string" },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "unit": { "type": "string" },
+        "joined": { "type": "boolean" },
+        "completed": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "title", "description", "category", "targetValue", "currentValue", "unit", "joined", "completed", "createdAt", "updatedAt"]
+    },
+    "AiChatMessage": {
+      "title": "AiChatMessage",
+      "description": "User AI Fitness Coach conversation message.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "role": { "type": "string", "enum": ["user", "model"] },
+        "text": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "role", "text", "createdAt"]
+    },
+    "ProgressPhotoNote": {
+      "title": "ProgressPhotoNote",
+      "description": "Private progress photo reference selected via Photo Picker with user-controlled deletion.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "localUri": { "type": "string" },
+        "weightKg": { "type": "number" },
+        "caption": { "type": "string" },
+        "dateKey": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "localUri", "weightKg", "caption", "dateKey", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Private user fitness profile and settings."
+    },
+    "/users/{userId}/step_records/{dateKey}": {
+      "schema": { "$ref": "#/entities/StepRecord" },
+      "description": "Daily step counter and manual adjustment records."
+    },
+    "/users/{userId}/gps_activities/{activityId}": {
+      "schema": { "$ref": "#/entities/GpsActivity" },
+      "description": "Private GPS workout sessions and route points."
+    },
+    "/users/{userId}/custom_foods/{foodId}": {
+      "schema": { "$ref": "#/entities/FoodItem" },
+      "description": "User custom and favorite foods."
+    },
+    "/users/{userId}/meals/{mealId}": {
+      "schema": { "$ref": "#/entities/MealLog" },
+      "description": "Daily logged meal entries."
+    },
+    "/users/{userId}/water_logs/{logId}": {
+      "schema": { "$ref": "#/entities/WaterLog" },
+      "description": "Daily hydration intake logs."
+    },
+    "/users/{userId}/workouts/{workoutId}": {
+      "schema": { "$ref": "#/entities/WorkoutPlan" },
+      "description": "Saved custom and AI-generated workout plans."
+    },
+    "/users/{userId}/workout_sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/WorkoutSessionLog" },
+      "description": "Completed workout history logs."
+    },
+    "/users/{userId}/workout_programs/{programId}": {
+      "schema": { "$ref": "#/entities/WorkoutProgram" },
+      "description": "User custom training programs."
+    },
+    "/users/{userId}/workout_schedules/{scheduleId}": {
+      "schema": { "$ref": "#/entities/WorkoutScheduleItem" },
+      "description": "Scheduled, completed, rest, or missed calendar entries."
+    },
+    "/users/{userId}/personal_records/{recordId}": {
+      "schema": { "$ref": "#/entities/PersonalRecord" },
+      "description": "Personal strength records per exercise."
+    },
+    "/users/{userId}/training_notes/{noteId}": {
+      "schema": { "$ref": "#/entities/TrainingNote" },
+      "description": "Persistent gym and technique notes."
+    },
+    "/users/{userId}/weight_records/{recordId}": {
+      "schema": { "$ref": "#/entities/WeightRecord" },
+      "description": "Body weight history entries."
+    },
+    "/users/{userId}/body_measurements/{measurementId}": {
+      "schema": { "$ref": "#/entities/BodyMeasurement" },
+      "description": "Body circumference measurements."
+    },
+    "/users/{userId}/challenges/{challengeId}": {
+      "schema": { "$ref": "#/entities/UserChallenge" },
+      "description": "User challenge progress."
+    },
+    "/users/{userId}/ai_messages/{msgId}": {
+      "schema": { "$ref": "#/entities/AiChatMessage" },
+      "description": "AI Fitness Coach chat history."
+    },
+    "/users/{userId}/progress_photos/{photoId}": {
+      "schema": { "$ref": "#/entities/ProgressPhotoNote" },
+      "description": "Private progress photo metadata."
+    }
+  }
+}

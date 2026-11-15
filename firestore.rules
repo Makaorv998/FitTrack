@@ -1,0 +1,529 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global safety net: deny everything by default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidTimestamp(ts) {
+      return ts is timestamp && ts <= request.time;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.userId == userId &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
+        (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
+        (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        data.ageYears is int && data.ageYears >= 13 && data.ageYears <= 120 &&
+        data.sex in ['male', 'female', 'other'] &&
+        data.heightCm is number && data.heightCm >= 80 && data.heightCm <= 260 &&
+        data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 400 &&
+        data.targetWeightKg is number && data.targetWeightKg >= 20 && data.targetWeightKg <= 400 &&
+        data.activityLevel in ['sedentary', 'light', 'moderate', 'active', 'very_active'] &&
+        data.goal in ['weight_loss', 'muscle_gain', 'general_fitness', 'weight_maintenance'] &&
+        data.dailyStepGoal is int && data.dailyStepGoal >= 1000 && data.dailyStepGoal <= 100000 &&
+        data.dailyWaterTargetMl is int && data.dailyWaterTargetMl >= 500 && data.dailyWaterTargetMl <= 10000 &&
+        data.dailyCalorieTarget is int && data.dailyCalorieTarget >= 1000 && data.dailyCalorieTarget <= 10000 &&
+        data.onboardingCompleted is bool &&
+        data.unitSystem in ['metric', 'imperial'] &&
+        data.themePreference in ['system', 'dark', 'light'] &&
+        data.sensorConsentGranted is bool &&
+        data.locationConsentGranted is bool;
+    }
+
+    function isValidStepRecord(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.steps is int && data.steps >= 0 && data.steps <= 500000 &&
+        data.manualSteps is int && data.manualSteps >= 0 && data.manualSteps <= 500000 &&
+        data.sensorBaseline is int && data.sensorBaseline >= 0 && data.sensorBaseline <= 100000000 &&
+        data.distanceKm is number && data.distanceKm >= 0 && data.distanceKm <= 500 &&
+        data.caloriesBurned is number && data.caloriesBurned >= 0 && data.caloriesBurned <= 50000;
+    }
+
+    function isValidGpsActivity(data, userId) {
+      return data.userId == userId &&
+        data.activityType in ['walking', 'running', 'cycling'] &&
+        data.durationSeconds is int && data.durationSeconds >= 0 && data.durationSeconds <= 86400 &&
+        data.distanceKm is number && data.distanceKm >= 0 && data.distanceKm <= 1000 &&
+        data.avgSpeedKmh is number && data.avgSpeedKmh >= 0 && data.avgSpeedKmh <= 200 &&
+        data.avgPaceMinPerKm is number && data.avgPaceMinPerKm >= 0 && data.avgPaceMinPerKm <= 120 &&
+        data.caloriesBurned is number && data.caloriesBurned >= 0 && data.caloriesBurned <= 20000 &&
+        data.routePoints is list && data.routePoints.size() <= 250 &&
+        data.notes is string && data.notes.size() <= 300 &&
+        data.startedAtMs is int && data.startedAtMs >= 0 &&
+        data.endedAtMs is int && data.endedAtMs >= data.startedAtMs;
+    }
+
+    function isValidFoodItem(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        (!('brand' in data) || (data.brand is string && data.brand.size() <= 100)) &&
+        data.servingSizeGrams is number && data.servingSizeGrams >= 1 && data.servingSizeGrams <= 5000 &&
+        data.servingLabel is string && data.servingLabel.size() >= 1 && data.servingLabel.size() <= 50 &&
+        data.caloriesPer100g is number && data.caloriesPer100g >= 0 && data.caloriesPer100g <= 1500 &&
+        data.proteinPer100g is number && data.proteinPer100g >= 0 && data.proteinPer100g <= 100 &&
+        data.carbsPer100g is number && data.carbsPer100g >= 0 && data.carbsPer100g <= 100 &&
+        data.fatPer100g is number && data.fatPer100g >= 0 && data.fatPer100g <= 100 &&
+        data.fiberPer100g is number && data.fiberPer100g >= 0 && data.fiberPer100g <= 100 &&
+        data.sugarPer100g is number && data.sugarPer100g >= 0 && data.sugarPer100g <= 100 &&
+        data.isFavorite is bool &&
+        data.isCustom is bool;
+    }
+
+    function isValidMealLog(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.mealType in ['breakfast', 'lunch', 'dinner', 'snack'] &&
+        data.foodName is string && data.foodName.size() >= 1 && data.foodName.size() <= 120 &&
+        data.grams is number && data.grams >= 1 && data.grams <= 5000 &&
+        data.calories is number && data.calories >= 0 && data.calories <= 10000 &&
+        data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000 &&
+        data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1000 &&
+        data.fatG is number && data.fatG >= 0 && data.fatG <= 1000 &&
+        data.fiberG is number && data.fiberG >= 0 && data.fiberG <= 500 &&
+        data.sugarG is number && data.sugarG >= 0 && data.sugarG <= 500 &&
+        data.source in ['manual', 'ai_scan', 'ai_plan'];
+    }
+
+    function isValidWaterLog(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.amountMl is int && data.amountMl >= 10 && data.amountMl <= 5000;
+    }
+
+    function isValidWorkoutPlan(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.level in ['beginner', 'intermediate', 'advanced'] &&
+        data.targetGoal is string && data.targetGoal.size() >= 1 && data.targetGoal.size() <= 60 &&
+        (!('programId' in data) || (data.programId is string && data.programId.size() <= 64)) &&
+        (!('programName' in data) || (data.programName is string && data.programName.size() <= 100)) &&
+        (!('dayLabel' in data) || (data.dayLabel is string && data.dayLabel.size() <= 40)) &&
+        (!('progressionNote' in data) || (data.progressionNote is string && data.progressionNote.size() <= 300)) &&
+        data.exercises is list && data.exercises.size() <= 30 &&
+        data.isAiGenerated is bool;
+    }
+
+    function isValidWorkoutSessionLog(data, userId) {
+      return data.userId == userId &&
+        data.workoutId is string && data.workoutId.size() <= 128 &&
+        data.workoutName is string && data.workoutName.size() >= 1 && data.workoutName.size() <= 100 &&
+        (!('programId' in data) || (data.programId is string && data.programId.size() <= 64)) &&
+        (!('dateKey' in data) || (data.dateKey is string && data.dateKey.size() <= 16)) &&
+        (!('notes' in data) || (data.notes is string && data.notes.size() <= 400)) &&
+        data.durationSeconds is int && data.durationSeconds >= 0 && data.durationSeconds <= 86400 &&
+        data.totalVolumeKg is number && data.totalVolumeKg >= 0 && data.totalVolumeKg <= 500000 &&
+        (!('warmupVolumeKg' in data) || (data.warmupVolumeKg is number && data.warmupVolumeKg >= 0 && data.warmupVolumeKg <= 500000)) &&
+        (!('workingVolumeKg' in data) || (data.workingVolumeKg is number && data.workingVolumeKg >= 0 && data.workingVolumeKg <= 500000)) &&
+        data.caloriesBurned is number && data.caloriesBurned >= 0 && data.caloriesBurned <= 10000 &&
+        data.setsCompleted is int && data.setsCompleted >= 0 && data.setsCompleted <= 500 &&
+        data.personalRecordsHit is int && data.personalRecordsHit >= 0 && data.personalRecordsHit <= 100 &&
+        data.completedSetsSummary is list && data.completedSetsSummary.size() <= 100 &&
+        (!('exerciseRecords' in data) || (data.exerciseRecords is list && data.exerciseRecords.size() <= 30));
+    }
+
+    function isValidWorkoutProgram(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 100 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 40 &&
+        data.goal is string && data.goal.size() >= 1 && data.goal.size() <= 60 &&
+        data.level in ['beginner', 'intermediate', 'advanced'] &&
+        data.daysPerWeek is int && data.daysPerWeek >= 1 && data.daysPerWeek <= 7 &&
+        data.description is string && data.description.size() <= 400 &&
+        data.weeklySplit is list && data.weeklySplit.size() <= 14 &&
+        data.progressionGuidance is string && data.progressionGuidance.size() <= 400 &&
+        data.workouts is list && data.workouts.size() <= 14 &&
+        data.isCustom is bool;
+    }
+
+    function isValidWorkoutScheduleItem(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.workoutId is string && data.workoutId.size() <= 128 &&
+        data.workoutName is string && data.workoutName.size() <= 100 &&
+        data.programId is string && data.programId.size() <= 64 &&
+        data.status in ['scheduled', 'completed', 'rest', 'missed'] &&
+        data.notes is string && data.notes.size() <= 300 &&
+        data.completedSessionId is string && data.completedSessionId.size() <= 128;
+    }
+
+    function isValidPersonalRecord(data, userId) {
+      return data.userId == userId &&
+        data.exerciseId is string && data.exerciseId.size() <= 64 &&
+        data.exerciseName is string && data.exerciseName.size() >= 1 && data.exerciseName.size() <= 100 &&
+        data.primaryMuscle is string && data.primaryMuscle.size() <= 40 &&
+        data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 1000 &&
+        data.reps is int && data.reps >= 1 && data.reps <= 500 &&
+        data.estimatedOneRmKg is number && data.estimatedOneRmKg >= 0 && data.estimatedOneRmKg <= 1500 &&
+        data.setVolumeKg is number && data.setVolumeKg >= 0 && data.setVolumeKg <= 50000 &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.sessionId is string && data.sessionId.size() <= 128;
+    }
+
+    function isValidTrainingNote(data, userId) {
+      return data.userId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+        data.body is string && data.body.size() <= 2000 &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.exerciseName is string && data.exerciseName.size() <= 100;
+    }
+
+    function isValidWeightRecord(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.weightKg is number && data.weightKg >= 20 && data.weightKg <= 400 &&
+        data.note is string && data.note.size() <= 200;
+    }
+
+    function isValidBodyMeasurement(data, userId) {
+      return data.userId == userId &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16 &&
+        data.waistCm is number && data.waistCm >= 0 && data.waistCm <= 250 &&
+        data.chestCm is number && data.chestCm >= 0 && data.chestCm <= 250 &&
+        data.armsCm is number && data.armsCm >= 0 && data.armsCm <= 100 &&
+        data.legsCm is number && data.legsCm >= 0 && data.legsCm <= 150 &&
+        data.hipsCm is number && data.hipsCm >= 0 && data.hipsCm <= 250;
+    }
+
+    function isValidUserChallenge(data, userId) {
+      return data.userId == userId &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+        data.description is string && data.description.size() <= 300 &&
+        data.category is string && data.category.size() >= 1 && data.category.size() <= 40 &&
+        data.targetValue is number && data.targetValue >= 1 && data.targetValue <= 1000000 &&
+        data.currentValue is number && data.currentValue >= 0 && data.currentValue <= 1000000 &&
+        data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 30 &&
+        data.joined is bool &&
+        data.completed is bool;
+    }
+
+    function isValidAiChatMessage(data, userId) {
+      return data.userId == userId &&
+        data.role in ['user', 'model'] &&
+        data.text is string && data.text.size() >= 1 && data.text.size() <= 8000;
+    }
+
+    function isValidProgressPhotoNote(data, userId) {
+      return data.userId == userId &&
+        data.localUri is string && data.localUri.size() >= 1 && data.localUri.size() <= 1000 &&
+        data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 400 &&
+        data.caption is string && data.caption.size() <= 200 &&
+        data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16;
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if isOwner(userId);
+
+      allow create: if isOwner(userId) &&
+        isValidId(userId) &&
+        incoming().keys().hasAll([
+          'userId', 'displayName', 'ageYears', 'sex', 'heightCm', 'weightKg',
+          'targetWeightKg', 'activityLevel', 'goal', 'dailyStepGoal',
+          'dailyWaterTargetMl', 'dailyCalorieTarget', 'onboardingCompleted',
+          'unitSystem', 'themePreference',
+          'sensorConsentGranted', 'locationConsentGranted', 'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'userId', 'displayName', 'email', 'photoUrl', 'ageYears', 'sex',
+          'heightCm', 'weightKg', 'targetWeightKg', 'activityLevel', 'goal',
+          'dailyStepGoal', 'dailyWaterTargetMl', 'dailyCalorieTarget',
+          'onboardingCompleted', 'unitSystem', 'themePreference',
+          'sensorConsentGranted', 'locationConsentGranted', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt) &&
+        isValidUserProfile(incoming(), userId);
+
+      allow update: if isOwner(userId) &&
+        isValidId(userId) &&
+        isValidUserProfile(incoming(), userId) &&
+        incoming().userId == existing().userId &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'email', 'photoUrl', 'ageYears', 'sex', 'heightCm',
+          'weightKg', 'targetWeightKg', 'activityLevel', 'goal', 'dailyStepGoal',
+          'dailyWaterTargetMl', 'dailyCalorieTarget', 'onboardingCompleted',
+          'unitSystem', 'themePreference', 'sensorConsentGranted',
+          'locationConsentGranted', 'updatedAt'
+        ]);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      match /step_records/{dateKey} {
+        allow get: if isOwner(userId) && isValidId(dateKey);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(dateKey) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'steps', 'manualSteps', 'sensorBaseline', 'distanceKm', 'caloriesBurned', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'steps', 'manualSteps', 'sensorBaseline', 'distanceKm', 'caloriesBurned', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidStepRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(dateKey) &&
+          isValidStepRecord(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().dateKey == existing().dateKey &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['steps', 'manualSteps', 'sensorBaseline', 'distanceKm', 'caloriesBurned', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(dateKey);
+      }
+
+      match /gps_activities/{activityId} {
+        allow get: if isOwner(userId) && isValidId(activityId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(activityId) &&
+          incoming().keys().hasAll(['userId', 'activityType', 'durationSeconds', 'distanceKm', 'avgSpeedKmh', 'avgPaceMinPerKm', 'caloriesBurned', 'routePoints', 'notes', 'startedAtMs', 'endedAtMs', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'activityType', 'durationSeconds', 'distanceKm', 'avgSpeedKmh', 'avgPaceMinPerKm', 'caloriesBurned', 'routePoints', 'notes', 'startedAtMs', 'endedAtMs', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidGpsActivity(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(activityId) &&
+          isValidGpsActivity(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(activityId);
+      }
+
+      match /custom_foods/{foodId} {
+        allow get: if isOwner(userId) && isValidId(foodId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(foodId) &&
+          incoming().keys().hasAll(['userId', 'name', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'isCustom', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'name', 'brand', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'isCustom', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidFoodItem(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(foodId) &&
+          isValidFoodItem(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brand', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(foodId);
+      }
+
+      match /meals/{mealId} {
+        allow get: if isOwner(userId) && isValidId(mealId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(mealId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'mealType', 'foodName', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'source', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'mealType', 'foodName', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'source', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidMealLog(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(mealId) &&
+          isValidMealLog(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['mealType', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(mealId);
+      }
+
+      match /water_logs/{logId} {
+        allow get: if isOwner(userId) && isValidId(logId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(logId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'amountMl', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'amountMl', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidWaterLog(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(logId);
+      }
+
+      match /workouts/{workoutId} {
+        allow get: if isOwner(userId) && isValidId(workoutId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(workoutId) &&
+          incoming().keys().hasAll(['userId', 'name', 'level', 'targetGoal', 'exercises', 'isAiGenerated', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'name', 'level', 'targetGoal', 'programId', 'programName', 'dayLabel', 'progressionNote', 'exercises', 'isAiGenerated', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidWorkoutPlan(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(workoutId) &&
+          isValidWorkoutPlan(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'level', 'targetGoal', 'programId', 'programName', 'dayLabel', 'progressionNote', 'exercises', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(workoutId);
+      }
+
+      match /workout_sessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(sessionId) &&
+          incoming().keys().hasAll(['userId', 'workoutId', 'workoutName', 'durationSeconds', 'totalVolumeKg', 'caloriesBurned', 'setsCompleted', 'personalRecordsHit', 'completedSetsSummary', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'workoutId', 'workoutName', 'programId', 'dateKey', 'notes', 'durationSeconds', 'totalVolumeKg', 'warmupVolumeKg', 'workingVolumeKg', 'caloriesBurned', 'setsCompleted', 'personalRecordsHit', 'completedSetsSummary', 'exerciseRecords', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidWorkoutSessionLog(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(sessionId);
+      }
+
+      match /workout_programs/{programId} {
+        allow get: if isOwner(userId) && isValidId(programId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(programId) &&
+          incoming().keys().hasAll(['userId', 'name', 'category', 'goal', 'level', 'daysPerWeek', 'description', 'weeklySplit', 'progressionGuidance', 'workouts', 'isCustom', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'name', 'category', 'goal', 'level', 'daysPerWeek', 'description', 'weeklySplit', 'progressionGuidance', 'workouts', 'isCustom', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidWorkoutProgram(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(programId) &&
+          isValidWorkoutProgram(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'category', 'goal', 'level', 'daysPerWeek', 'description', 'weeklySplit', 'progressionGuidance', 'workouts', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(programId);
+      }
+
+      match /workout_schedules/{scheduleId} {
+        allow get: if isOwner(userId) && isValidId(scheduleId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(scheduleId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'workoutId', 'workoutName', 'programId', 'status', 'notes', 'completedSessionId', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'workoutId', 'workoutName', 'programId', 'status', 'notes', 'completedSessionId', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidWorkoutScheduleItem(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(scheduleId) &&
+          isValidWorkoutScheduleItem(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['dateKey', 'workoutId', 'workoutName', 'programId', 'status', 'notes', 'completedSessionId', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(scheduleId);
+      }
+
+      match /personal_records/{recordId} {
+        allow get: if isOwner(userId) && isValidId(recordId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(recordId) &&
+          incoming().keys().hasAll(['userId', 'exerciseId', 'exerciseName', 'primaryMuscle', 'weightKg', 'reps', 'estimatedOneRmKg', 'setVolumeKg', 'dateKey', 'sessionId', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'exerciseId', 'exerciseName', 'primaryMuscle', 'weightKg', 'reps', 'estimatedOneRmKg', 'setVolumeKg', 'dateKey', 'sessionId', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidPersonalRecord(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(recordId) &&
+          isValidPersonalRecord(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          isValidTimestamp(incoming().createdAt);
+        allow delete: if isOwner(userId) && isValidId(recordId);
+      }
+
+      match /training_notes/{noteId} {
+        allow get: if isOwner(userId) && isValidId(noteId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(noteId) &&
+          incoming().keys().hasAll(['userId', 'title', 'body', 'dateKey', 'exerciseName', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'title', 'body', 'dateKey', 'exerciseName', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidTrainingNote(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(noteId) &&
+          isValidTrainingNote(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'body', 'dateKey', 'exerciseName', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(noteId);
+      }
+
+      match /weight_records/{recordId} {
+        allow get: if isOwner(userId) && isValidId(recordId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(recordId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'weightKg', 'note', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'weightKg', 'note', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidWeightRecord(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(recordId);
+      }
+
+      match /body_measurements/{measurementId} {
+        allow get: if isOwner(userId) && isValidId(measurementId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(measurementId) &&
+          incoming().keys().hasAll(['userId', 'dateKey', 'waistCm', 'chestCm', 'armsCm', 'legsCm', 'hipsCm', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'waistCm', 'chestCm', 'armsCm', 'legsCm', 'hipsCm', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidBodyMeasurement(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(measurementId);
+      }
+
+      match /challenges/{challengeId} {
+        allow get: if isOwner(userId) && isValidId(challengeId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(challengeId) &&
+          incoming().keys().hasAll(['userId', 'title', 'description', 'category', 'targetValue', 'currentValue', 'unit', 'joined', 'completed', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'title', 'description', 'category', 'targetValue', 'currentValue', 'unit', 'joined', 'completed', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidUserChallenge(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(challengeId) &&
+          isValidUserChallenge(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['currentValue', 'joined', 'completed', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(challengeId);
+      }
+
+      match /ai_messages/{msgId} {
+        allow get: if isOwner(userId) && isValidId(msgId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(msgId) &&
+          incoming().keys().hasAll(['userId', 'role', 'text', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'role', 'text', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidAiChatMessage(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(msgId);
+      }
+
+      match /progress_photos/{photoId} {
+        allow get: if isOwner(userId) && isValidId(photoId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(photoId) &&
+          incoming().keys().hasAll(['userId', 'localUri', 'weightKg', 'caption', 'dateKey', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'localUri', 'weightKg', 'caption', 'dateKey', 'createdAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidProgressPhotoNote(incoming(), userId);
+        allow update: if false;
+        allow delete: if isOwner(userId) && isValidId(photoId);
+      }
+    }
+  }
+}

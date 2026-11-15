@@ -1,0 +1,13 @@
+<resources>
+    <string name="app_name">FitTrack</string>
+    <string name="nav_home">Home</string>
+    <string name="nav_activity">Activity</string>
+    <string name="nav_nutrition">Nutrition</string>
+    <string name="nav_workouts">Workouts</string>
+    <string name="nav_profile">Profile</string>
+    <string name="sign_in_google">Sign in with Google</string>
+    <string name="welcome_tagline">Precision Fitness, Nutrition &amp; AI Coaching</string>
+    <string name="ai_disclaimer">AI estimates and guidance are informational only and not medical advice.</string>
+    <string name="calorie_estimate_disclaimer">Portion and calorie estimates from food photos are approximations. Confirm before saving.</string>
+    <string name="minor_safeguard_notice">Safety Safeguard: Calorie-restriction and weight-loss deficits are disabled for users under 18. Focus on balanced nutrition and active habits.</string>
+</resources>

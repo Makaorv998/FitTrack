@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<resources>
+    <string name="firestore_database_id" translatable="false">ai-studio-android-fittrack-103d873d-fc2f-4ae5-8e7e-2ba44bf1bec0</string>
+    <string name="recaptcha_site_key" translatable="false">6LeKXSEuAAAAAErfrPbaTDz-PrccKmQ_W7QZP_8M</string>
+</resources>
