@@ -59,6 +59,7 @@ import com.example.data.catalog.WorkoutCatalog
 import com.example.data.model.GpsActivity
 import com.example.data.model.MealLog
 import com.example.data.model.StepRecord
+import com.example.data.model.UpdateCenterUiState
 import com.example.data.model.UserChallenge
 import com.example.data.model.UserProfile
 import com.example.data.model.WaterLog
@@ -83,6 +84,7 @@ import com.example.ui.components.SecondaryButton
 import com.example.ui.components.SectionHeader
 import com.example.ui.components.SimpleBarChart
 import com.example.ui.components.StatusBadge
+import com.example.ui.components.UpdateAvailabilityBanner
 import com.example.ui.theme.HeroNumberTextStyle
 import com.example.ui.theme.LocalFitTrackColors
 import java.text.SimpleDateFormat
@@ -109,7 +111,10 @@ fun HomeScreen(
     onOpenAiCoach: () -> Unit,
     onOpenWorkouts: () -> Unit,
     onStartWorkout: (WorkoutPlan) -> Unit,
-    onOpenChallenges: () -> Unit
+    onOpenChallenges: () -> Unit,
+    updateUiState: UpdateCenterUiState = UpdateCenterUiState(),
+    onOpenUpdateCenter: () -> Unit = {},
+    onOpenWhatsNew: () -> Unit = {}
 ) {
     val ext = LocalFitTrackColors.current
     val today = remember { todayDateKey() }
@@ -243,6 +248,20 @@ fun HomeScreen(
                             tint = MaterialTheme.colorScheme.onBackground
                         )
                     }
+                }
+            }
+
+            // Update / What's New Banner (shown only when actionable or unread)
+            if (updateUiState.isUpdateAvailable ||
+                updateUiState.unreadReleaseCount > 0 ||
+                updateUiState.playUpdateState is com.example.data.model.PlayUpdateUiState.DownloadedReadyToInstall
+            ) {
+                item {
+                    UpdateAvailabilityBanner(
+                        uiState = updateUiState,
+                        onOpenUpdateCenter = onOpenUpdateCenter,
+                        onOpenWhatsNew = onOpenWhatsNew
+                    )
                 }
             }
 

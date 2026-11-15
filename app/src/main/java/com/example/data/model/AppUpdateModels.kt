@@ -163,7 +163,11 @@ sealed interface ApkInstallUiState {
     data object Idle : ApkInstallUiState
     data class Downloading(val progress: Float, val bytesRead: Long, val totalBytes: Long) : ApkInstallUiState
     data object Verifying : ApkInstallUiState
-    data class NeedsUnknownSourcesPermission(val apkFilePath: String, val targetVersionName: String) : ApkInstallUiState
+    data class NeedsUnknownSourcesPermission(
+        val apkFilePath: String,
+        val targetVersionName: String,
+        val certSha256: String = ""
+    ) : ApkInstallUiState
     data class VerifiedReady(val apkFilePath: String, val certSha256: String, val targetVersionName: String) : ApkInstallUiState
     data class InstallerLaunched(val targetVersionName: String) : ApkInstallUiState
     data class Failed(val message: String) : ApkInstallUiState

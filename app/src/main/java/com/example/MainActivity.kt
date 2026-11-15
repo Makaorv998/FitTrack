@@ -1,9 +1,17 @@
 package com.example
 
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -37,6 +45,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
@@ -51,9 +60,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.credentials.CredentialManager
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavDestination.Companion.hasRoute
@@ -69,7 +82,9 @@ import com.example.data.firebase.FitTrackRepository
 import com.example.data.firebase.configureAppCheck
 import com.example.platform.RestTimerAndSessionStore
 import com.example.platform.StepCounterManager
+import com.example.platform.UpdateNotificationManager
 import com.example.platform.UserPreferencesStore
+import com.example.ui.AppUpdateViewModel
 import com.example.ui.FitTrackViewModel
 import com.example.ui.components.AuroraAmbientBackground
 import com.example.ui.components.BottomNavTabItem
@@ -93,7 +108,9 @@ import com.example.ui.screens.NutritionScreen
 import com.example.ui.screens.OnboardingWizardScreen
 import com.example.ui.screens.ProfileScreen
 import com.example.ui.screens.SettingsScreen
+import com.example.ui.screens.UpdateCenterScreen
 import com.example.ui.screens.WelcomeAuthScreen
+import com.example.ui.screens.WhatsNewScreen
 import com.example.ui.screens.WorkoutsScreen
 import com.example.ui.theme.FitTrackTheme
 import com.example.ui.theme.rememberReducedMotion
@@ -103,16 +120,41 @@ import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
 
 class MainActivity : ComponentActivity() {
+    private val pendingUpdateNavTarget = MutableStateFlow<Pair<String, Long?>?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         // Must configure App Check before setContent, ViewModels, or Firebase API calls.
         configureAppCheck(this, intent)
         super.onCreate(savedInstanceState)
+        UpdateNotificationManager(this).ensureNotificationChannels()
+        handleUpdateIntent(intent)
         enableEdgeToEdge()
         setContent {
-            FitTrackAppRoot()
+            val pendingTarget by pendingUpdateNavTarget.collectAsStateWithLifecycle()
+            FitTrackAppRoot(
+                pendingUpdateTarget = pendingTarget,
+                onConsumeUpdateNavTarget = { pendingUpdateNavTarget.value = null }
+            )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleUpdateIntent(intent)
+    }
+
+    private fun handleUpdateIntent(intent: Intent?) {
+        val target = intent?.getStringExtra(UpdateNotificationManager.EXTRA_UPDATE_NAV_TARGET)
+        if (!target.isNullOrBlank()) {
+            val ver = intent.getLongExtra(UpdateNotificationManager.EXTRA_RELEASE_VERSION_CODE, -1L)
+                .takeIf { it > 0L }
+            pendingUpdateNavTarget.value = target to ver
+            intent.removeExtra(UpdateNotificationManager.EXTRA_UPDATE_NAV_TARGET)
         }
     }
 }
@@ -128,7 +170,10 @@ private fun observeAuthState() = callbackFlow<FirebaseUser?> {
 }
 
 @Composable
-private fun FitTrackAppRoot() {
+private fun FitTrackAppRoot(
+    pendingUpdateTarget: Pair<String, Long?>? = null,
+    onConsumeUpdateNavTarget: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember(context) { CredentialManager.create(context) }
@@ -176,6 +221,8 @@ private fun FitTrackAppRoot() {
     key(user.uid) {
         AuthenticatedFitTrackShell(
             user = user,
+            pendingUpdateTarget = pendingUpdateTarget,
+            onConsumeUpdateNavTarget = onConsumeUpdateNavTarget,
             onSignOut = {
                 AuthManager.signOut(credentialManager = credentialManager, scope = scope)
             }
@@ -186,6 +233,8 @@ private fun FitTrackAppRoot() {
 @Composable
 private fun AuthenticatedFitTrackShell(
     user: FirebaseUser,
+    pendingUpdateTarget: Pair<String, Long?>?,
+    onConsumeUpdateNavTarget: () -> Unit,
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -211,6 +260,46 @@ private fun AuthenticatedFitTrackShell(
             }
         }
     )
+    val updateViewModel: AppUpdateViewModel = viewModel(
+        key = "app_update_${user.uid}",
+        factory = remember(appContext) {
+            object : ViewModelProvider.Factory {
+                @Suppress("UNCHECKED_CAST")
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    return AppUpdateViewModel.createDefault(appContext) as T
+                }
+            }
+        }
+    )
+    val updateUiState by updateViewModel.uiState.collectAsStateWithLifecycle()
+
+    val playUpdateLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        updateViewModel.onPlayUpdateResult(result.resultCode)
+    }
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) {
+        updateViewModel.refreshSystemPermissions()
+    }
+    val unknownSourcesLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) {
+        updateViewModel.refreshSystemPermissions()
+    }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, updateViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                updateViewModel.onAppForegrounded(forceCheck = false)
+                updateViewModel.resumePlayUpdateIfInProgress(playUpdateLauncher)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val profileLoaded by viewModel.profileLoaded.collectAsStateWithLifecycle()
     val profile by viewModel.userProfile.collectAsStateWithLifecycle()
@@ -294,6 +383,42 @@ private fun AuthenticatedFitTrackShell(
             statusMessage?.let { msg ->
                 snackbarHostState.showSnackbar(msg)
                 viewModel.clearStatusMessage()
+            }
+        }
+
+        LaunchedEffect(
+            profileLoaded,
+            profile?.onboardingCompleted,
+            updateUiState.shouldAutoShowWhatsNew,
+            updateUiState.pendingWhatsNewVersionCode
+        ) {
+            if (profileLoaded && profile?.onboardingCompleted == true && updateUiState.shouldAutoShowWhatsNew) {
+                val targetVersion = updateUiState.pendingWhatsNewVersionCode
+                if (targetVersion != null) {
+                    updateViewModel.acknowledgeWhatsNewPresented(targetVersion)
+                }
+                navController.navigate(FitTrackRoute.WhatsNew(targetVersion)) {
+                    launchSingleTop = true
+                }
+            }
+        }
+
+        LaunchedEffect(profileLoaded, profile?.onboardingCompleted, pendingUpdateTarget) {
+            if (profileLoaded && profile?.onboardingCompleted == true && pendingUpdateTarget != null) {
+                val (target, versionCode) = pendingUpdateTarget
+                when (target) {
+                    UpdateNotificationManager.TARGET_WHATS_NEW -> {
+                        navController.navigate(FitTrackRoute.WhatsNew(versionCode)) {
+                            launchSingleTop = true
+                        }
+                    }
+                    UpdateNotificationManager.TARGET_UPDATE_CENTER -> {
+                        navController.navigate(FitTrackRoute.UpdateCenter) {
+                            launchSingleTop = true
+                        }
+                    }
+                }
+                onConsumeUpdateNavTarget()
             }
         }
 
@@ -438,7 +563,10 @@ private fun AuthenticatedFitTrackShell(
                                         viewModel.startActiveWorkout(plan)
                                         navigateTopLevel(FitTrackRoute.Workouts)
                                     },
-                                    onOpenChallenges = { navController.navigate(FitTrackRoute.Challenges) }
+                                    onOpenChallenges = { navController.navigate(FitTrackRoute.Challenges) },
+                                    updateUiState = updateUiState,
+                                    onOpenUpdateCenter = { navController.navigate(FitTrackRoute.UpdateCenter) },
+                                    onOpenWhatsNew = { navController.navigate(FitTrackRoute.WhatsNew()) }
                                 )
                             }
 
@@ -713,6 +841,73 @@ private fun AuthenticatedFitTrackShell(
                                     onDeleteAccountData = {
                                         viewModel.deleteAccountData { onSignOut() }
                                     },
+                                    onBack = { navController.popBackStack() },
+                                    updateUiState = updateUiState,
+                                    onOpenUpdateCenter = { navController.navigate(FitTrackRoute.UpdateCenter) },
+                                    onOpenWhatsNew = { navController.navigate(FitTrackRoute.WhatsNew()) }
+                                )
+                            }
+
+                            composable<FitTrackRoute.UpdateCenter> {
+                                UpdateCenterScreen(
+                                    uiState = updateUiState,
+                                    onCheckForUpdates = { updateViewModel.checkForUpdates(force = true) },
+                                    onStartPlayUpdate = { forceImmediate ->
+                                        updateViewModel.startPlayUpdate(playUpdateLauncher, forceImmediate)
+                                    },
+                                    onCompletePlayUpdate = { updateViewModel.completePlayFlexibleUpdate() },
+                                    onDownloadApkUpdate = { release ->
+                                        updateViewModel.startApkDownloadAndVerification(release)
+                                    },
+                                    onOpenUnknownSourcesSettings = {
+                                        updateViewModel.createUnknownSourcesSettingsIntent()?.let { intent ->
+                                            runCatching { unknownSourcesLauncher.launch(intent) }
+                                        }
+                                    },
+                                    onLaunchApkInstaller = { path, versionName ->
+                                        updateViewModel.launchVerifiedApkInstaller(path, versionName)
+                                    },
+                                    onOpenWhatsNew = { navController.navigate(FitTrackRoute.WhatsNew()) },
+                                    onRequestNotificationPermission = {
+                                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                                            ContextCompat.checkSelfPermission(
+                                                context,
+                                                Manifest.permission.POST_NOTIFICATIONS
+                                            ) != PackageManager.PERMISSION_GRANTED
+                                        ) {
+                                            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                                        } else {
+                                            val settingsIntent = Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                                                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                                            }
+                                            runCatching { context.startActivity(settingsIntent) }
+                                        }
+                                    },
+                                    onUpdateNotificationPrefs = { prefs ->
+                                        updateViewModel.updateNotificationPreferences(prefs)
+                                    },
+                                    onBack = { navController.popBackStack() },
+                                    onOpenPlayStoreUrl = { url ->
+                                        runCatching {
+                                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                                        }
+                                    }
+                                )
+                            }
+
+                            composable<FitTrackRoute.WhatsNew> { entry ->
+                                val route = entry.toRoute<FitTrackRoute.WhatsNew>()
+                                WhatsNewScreen(
+                                    uiState = updateUiState,
+                                    highlightVersionCode = route.versionCode,
+                                    onMarkReleaseRead = { code -> updateViewModel.markReleaseAsRead(code) },
+                                    onMarkAllRead = { updateViewModel.markAllReleasesAsRead() },
+                                    onOpenUpdateCenter = {
+                                        navController.navigate(FitTrackRoute.UpdateCenter) {
+                                            launchSingleTop = true
+                                        }
+                                    },
+                                    onCheckForUpdates = { updateViewModel.checkForUpdates(force = true) },
                                     onBack = { navController.popBackStack() }
                                 )
                             }

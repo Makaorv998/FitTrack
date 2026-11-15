@@ -20,4 +20,6 @@ sealed interface FitTrackRoute {
     @Serializable data object BodyProgress : FitTrackRoute
     @Serializable data object Challenges : FitTrackRoute
     @Serializable data object Settings : FitTrackRoute
+    @Serializable data object UpdateCenter : FitTrackRoute
+    @Serializable data class WhatsNew(val versionCode: Long? = null) : FitTrackRoute
 }

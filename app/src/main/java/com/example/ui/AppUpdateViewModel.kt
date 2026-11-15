@@ -134,13 +134,7 @@ class AppUpdateViewModel(
 
             val localState = stateStore.loadState()
             val prefs = localState.notificationPreferences
-            val effectiveInterval = if (localState.cachedPolicy.checkIntervalMinutes > 0L &&
-                prefs.checkIntervalMinutes == 360L
-            ) {
-                localState.cachedPolicy.checkIntervalMinutes
-            } else {
-                prefs.checkIntervalMinutes
-            }
+            val effectiveInterval = effectiveCheckIntervalMinutes(localState)
 
             if (forceCheck || prefs.autoCheckOnForeground) {
                 if (AppUpdateEngine.shouldRunAutomaticCheck(
@@ -153,6 +147,15 @@ class AppUpdateViewModel(
                     performUpdateCheck(force = forceCheck)
                 }
             }
+        }
+    }
+
+    private fun effectiveCheckIntervalMinutes(state: LocalUpdateState): Long {
+        val prefInterval = state.notificationPreferences.checkIntervalMinutes
+        return if (state.cachedPolicy.checkIntervalMinutes > 0L && prefInterval == 360L) {
+            state.cachedPolicy.checkIntervalMinutes
+        } else {
+            prefInterval
         }
     }
 
@@ -218,7 +221,7 @@ class AppUpdateViewModel(
     private suspend fun performUpdateCheck(force: Boolean) {
         val snapshot = appInfoProvider.getInstalledAppSnapshot()
         val currentState = stateStore.loadState()
-        val effectiveInterval = currentState.notificationPreferences.checkIntervalMinutes
+        val effectiveInterval = effectiveCheckIntervalMinutes(currentState)
         if (!AppUpdateEngine.shouldRunAutomaticCheck(
                 nowMs = nowProvider(),
                 lastCheckMs = currentState.lastCheckEpochMs,

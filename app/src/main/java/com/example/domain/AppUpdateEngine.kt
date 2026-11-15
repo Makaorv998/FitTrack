@@ -195,7 +195,7 @@ object AppUpdateEngine {
         if (!uri.scheme.equals("https", ignoreCase = true)) return false
         if (!uri.userInfo.isNullOrBlank()) return false
         val host = uri.host?.lowercase(Locale.US)?.takeIf { it.isNotBlank() } ?: return false
-        if (host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0") return false
+        if (host == "localhost" || host == "127.0.0.1" || host == "0.0.0.0" || host == "::1" || host == "[::1]") return false
 
         val normalizedAllowlist = trustedHosts
             .map { it.trim().lowercase(Locale.US) }

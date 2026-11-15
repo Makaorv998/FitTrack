@@ -19,6 +19,8 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -43,12 +45,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
+import com.example.data.model.UpdateCenterUiState
+import com.example.data.model.UpdateSeverity
 import com.example.data.model.UserProfile
 import com.example.ui.components.AuroraAmbientBackground
 import com.example.ui.components.ConfirmationModal
 import com.example.ui.components.FitTrackCard
 import com.example.ui.components.GradientButton
+import com.example.ui.components.ReleaseSeverityBadge
 import com.example.ui.components.SecondaryButton
+import com.example.ui.components.StatusBadge
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -61,7 +67,10 @@ fun SettingsScreen(
     onExportJson: suspend () -> String,
     onSignOut: () -> Unit,
     onDeleteAccountData: () -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    updateUiState: UpdateCenterUiState = UpdateCenterUiState(),
+    onOpenUpdateCenter: () -> Unit = {},
+    onOpenWhatsNew: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -199,6 +208,55 @@ fun SettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Delete All User Data")
                     }
+                }
+
+                FitTrackCard(modifier = Modifier.fillMaxWidth()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("App Updates & Changelog", style = MaterialTheme.typography.titleLarge)
+                            Text(
+                                text = "Installed v${updateUiState.installedVersionName} (build ${updateUiState.installedVersionCode})",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (updateUiState.isUpdateAvailable) {
+                            ReleaseSeverityBadge(severity = updateUiState.severity)
+                        } else if (updateUiState.unreadReleaseCount > 0) {
+                            StatusBadge(
+                                text = "${updateUiState.unreadReleaseCount} NEW",
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                        } else {
+                            ReleaseSeverityBadge(severity = UpdateSeverity.NONE)
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(12.dp))
+                    GradientButton(
+                        text = if (updateUiState.isUpdateAvailable && updateUiState.latestRelease != null) {
+                            "Update Center (v${updateUiState.latestRelease.versionName} Available)"
+                        } else {
+                            "Update Center"
+                        },
+                        icon = Icons.Filled.SystemUpdate,
+                        onClick = onOpenUpdateCenter,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_update_center_button")
+                    )
+                    Spacer(modifier = Modifier.height(10.dp))
+                    SecondaryButton(
+                        text = "What's New & Version History",
+                        icon = Icons.Filled.History,
+                        onClick = onOpenWhatsNew,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("settings_whats_new_button")
+                    )
                 }
             }
         }

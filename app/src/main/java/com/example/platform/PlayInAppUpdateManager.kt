@@ -17,9 +17,10 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.tasks.await
 
-class PlayInAppUpdateManager(context: Context) {
-
+class PlayInAppUpdateManager(
+    context: Context,
     private val appUpdateManager: AppUpdateManager = AppUpdateManagerFactory.create(context.applicationContext)
+) {
 
     private val _state = MutableStateFlow<PlayUpdateUiState>(PlayUpdateUiState.Idle)
     val state: StateFlow<PlayUpdateUiState> = _state.asStateFlow()

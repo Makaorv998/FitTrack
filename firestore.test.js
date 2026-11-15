@@ -233,3 +233,84 @@ test("Owner can manage workout programs, schedules, personal records, and traini
   await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("training_notes").get());
 });
 
+test("Public can read published app_releases and app_config; non-admins cannot write or read unpublished", async () => {
+  const adminDb = testEnv.authenticatedContext("admin_1", {
+    email: "makarov.ds998@gmail.com",
+    email_verified: true,
+  }).firestore();
+  const userDb = testEnv.authenticatedContext(ALICE_UID, {
+    email: "alice@example.com",
+    email_verified: true,
+  }).firestore();
+  const unauthDb = testEnv.unauthenticatedContext().firestore();
+  const ts = nowTs();
+
+  const validRelease = {
+    versionName: "1.2.0",
+    versionCode: 12,
+    releaseDate: "2026-11-15",
+    title: "Smart Recovery & Update Center",
+    summary: "Adds automated update checks and verified release notes.",
+    severity: "optional",
+    minSupportedVersionCode: 1,
+    minSupportedVersionName: "1.0",
+    distributionChannel: "both",
+    apkDownloadUrl: "https://downloads.fittrack.app/releases/fittrack-1.2.0.apk",
+    apkSha256: "a".repeat(64),
+    expectedSigningCertSha256: "b".repeat(64),
+    playStoreUrl: "https://play.google.com/store/apps/details?id=com.aistudio.fittrack.vrmqtx",
+    newFeatures: ["Update Center", "What's New changelog history"],
+    improvements: ["Faster workout analytics"],
+    bugFixes: ["Fixed rest timer pause sync"],
+    securityChanges: ["Enforced APK SHA-256 and signature checks"],
+    isPublished: true,
+    createdAt: ts,
+    updatedAt: ts,
+  };
+
+  await assertSucceeds(adminDb.collection("app_releases").doc("v12").set(validRelease));
+  await assertSucceeds(
+    adminDb.collection("app_releases").doc("v13_draft").set({
+      ...validRelease,
+      versionName: "1.3.0",
+      versionCode: 13,
+      isPublished: false,
+    })
+  );
+  await assertSucceeds(
+    adminDb.collection("app_config").doc("update_policy").set({
+      checkIntervalMinutes: 360,
+      minSupportedVersionCode: 1,
+      latestVersionCode: 12,
+      trustedApkHosts: ["downloads.fittrack.app"],
+      defaultDistributionChannel: "both",
+      playUpdatePriorityThreshold: 4,
+      updatedAt: ts,
+    })
+  );
+
+  // Public reads for published release and update policy config
+  await assertSucceeds(unauthDb.collection("app_releases").doc("v12").get());
+  await assertSucceeds(userDb.collection("app_releases").doc("v12").get());
+  await assertSucceeds(unauthDb.collection("app_config").doc("update_policy").get());
+
+  // Draft release & config list remain blocked
+  await assertFails(unauthDb.collection("app_releases").doc("v13_draft").get());
+  await assertFails(userDb.collection("app_releases").doc("v13_draft").get());
+  await assertFails(userDb.collection("app_config").get());
+
+  // Non-admin writes and client /admins escalation blocked
+  await assertFails(userDb.collection("app_releases").doc("v14").set(validRelease));
+  await assertFails(userDb.collection("app_config").doc("update_policy").update({ latestVersionCode: 99, updatedAt: ts }));
+  await assertFails(userDb.collection("admins").doc(ALICE_UID).set({ email: "alice@example.com", role: "release_admin" }));
+
+  // Insecure HTTP APK URL rejected even for admin
+  await assertFails(
+    adminDb.collection("app_releases").doc("v14_bad").set({
+      ...validRelease,
+      apkDownloadUrl: "http://insecure.example.com/app.apk",
+    })
+  );
+});
+
+

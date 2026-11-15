@@ -85,7 +85,8 @@ fun UpdateCenterScreen(
     onOpenWhatsNew: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onUpdateNotificationPrefs: (UpdateNotificationPreferences) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onOpenPlayStoreUrl: (String) -> Unit = {}
 ) {
     val ext = LocalFitTrackColors.current
     val bottomClearance = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding() + 32.dp
@@ -268,7 +269,7 @@ fun UpdateCenterScreen(
                                 )
                             }
 
-                            // Google Play In-App Update Section
+                            // Google Play In-App Update Section (with Store URL fallback if needed)
                             if (uiState.distributionChannel == DistributionChannel.PLAY_STORE || showPlayCard) {
                                 Spacer(modifier = Modifier.height(14.dp))
                                 PlayUpdateActionBlock(
@@ -277,6 +278,16 @@ fun UpdateCenterScreen(
                                     onStartPlayUpdate = onStartPlayUpdate,
                                     onCompletePlayUpdate = onCompletePlayUpdate
                                 )
+                                if (!showPlayCard && latestRelease.playStoreUrl.startsWith("https://")) {
+                                    SecondaryButton(
+                                        text = "Open in Google Play",
+                                        icon = Icons.Filled.SystemUpdate,
+                                        onClick = { onOpenPlayStoreUrl(latestRelease.playStoreUrl) },
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("open_play_store_fallback_button")
+                                    )
+                                }
                             }
 
                             // Direct APK Verified Install Workflow

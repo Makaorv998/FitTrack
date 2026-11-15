@@ -124,7 +124,8 @@ class ApkUpdateInstaller(
                 val nextState = if (!appInfoProvider.canRequestPackageInstalls()) {
                     ApkInstallUiState.NeedsUnknownSourcesPermission(
                         apkFilePath = targetFile.absolutePath,
-                        targetVersionName = release.versionName
+                        targetVersionName = release.versionName,
+                        certSha256 = verification.certSha256
                     )
                 } else {
                     ApkInstallUiState.VerifiedReady(
@@ -278,7 +279,7 @@ class ApkUpdateInstaller(
         if (current is ApkInstallUiState.NeedsUnknownSourcesPermission && appInfoProvider.canRequestPackageInstalls()) {
             _state.value = ApkInstallUiState.VerifiedReady(
                 apkFilePath = current.apkFilePath,
-                certSha256 = "",
+                certSha256 = current.certSha256,
                 targetVersionName = current.targetVersionName
             )
         }
