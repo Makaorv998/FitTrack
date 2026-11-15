@@ -27,9 +27,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import com.example.data.catalog.FitnessCatalog
 import com.example.data.model.UserChallenge
+import com.example.domain.UnitFormatter
 import com.example.ui.branding.FitTrackGeometricIllustration
 import com.example.ui.branding.FitTrackIllustrationType
 import com.example.ui.components.AuroraAmbientBackground
@@ -48,9 +50,11 @@ fun ChallengesScreen(
     uid: String,
     challenges: List<UserChallenge>,
     onUpdateChallenge: (UserChallenge, Double, Boolean) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    unitSystem: String = "metric"
 ) {
     val ext = LocalFitTrackColors.current
+    val isImperial = UnitFormatter.isImperial(unitSystem)
     val displayChallenges = remember(challenges, uid) {
         if (challenges.isNotEmpty()) challenges else FitnessCatalog.defaultChallenges(uid)
     }
@@ -73,7 +77,8 @@ fun ChallengesScreen(
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(innerPadding),
+                    .padding(innerPadding)
+                    .testTag("challenges_list"),
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
@@ -101,10 +106,43 @@ fun ChallengesScreen(
                     }
                 }
 
-                items(displayChallenges, key = { it.title }) { ch ->
+                items(displayChallenges, key = { it.id.ifBlank { it.title } }) { ch ->
                     val ratio = (ch.currentValue / ch.targetValue.coerceAtLeast(1.0)).toFloat().coerceIn(0f, 1f)
+                    val isWaterChallenge = ch.category.equals("water", ignoreCase = true) ||
+                        ch.category.equals("hydration", ignoreCase = true) ||
+                        ch.unit.equals("ml", ignoreCase = true)
+                    val isDistanceChallenge = ch.category.equals("gps", ignoreCase = true) ||
+                        ch.unit.equals("km", ignoreCase = true)
+
+                    val progressText = when {
+                        isWaterChallenge -> UnitFormatter.formatWaterRatio(
+                            ch.currentValue.roundToInt().toLong(),
+                            ch.targetValue.roundToInt().toLong(),
+                            unitSystem
+                        )
+                        isDistanceChallenge -> "${UnitFormatter.formatDistance(ch.currentValue, unitSystem, 1)} / ${UnitFormatter.formatDistance(ch.targetValue, unitSystem, 1)}"
+                        else -> "${ch.currentValue.roundToInt()} / ${ch.targetValue.roundToInt()} ${ch.unit}"
+                    }
+
+                    val stepIncrement = when {
+                        ch.category.equals("steps", ignoreCase = true) -> 2500.0
+                        isWaterChallenge -> if (isImperial) UnitFormatter.inputWaterToMl(8.0, "imperial").toDouble() else 250.0
+                        isDistanceChallenge -> if (isImperial) UnitFormatter.inputDistanceToKm(1.0, "imperial") else 1.0
+                        ch.category.equals("workouts", ignoreCase = true) -> 1.0
+                        else -> 1.0
+                    }
+
+                    val incrementButtonLabel = when {
+                        ch.category.equals("steps", ignoreCase = true) -> "Log +2500"
+                        isWaterChallenge -> if (isImperial) "Log +8 fl oz" else "Log +250 ml"
+                        isDistanceChallenge -> if (isImperial) "Log +1 mi" else "Log +1 km"
+                        else -> "Log +1"
+                    }
+
                     FitTrackCard(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("challenge_card_${ch.id.ifBlank { ch.title }}"),
                         accentBorder = if (ch.completed) ext.success else null
                     ) {
                         Row(
@@ -122,7 +160,7 @@ fun ChallengesScreen(
                         Spacer(modifier = Modifier.height(10.dp))
                         AuroraProgressBar(
                             label = "Progress",
-                            valueText = "${ch.currentValue.roundToInt()} / ${ch.targetValue.roundToInt()} ${ch.unit}",
+                            valueText = progressText,
                             progress = ratio,
                             color = if (ch.completed) ext.success else MaterialTheme.colorScheme.primary
                         )
@@ -131,21 +169,19 @@ fun ChallengesScreen(
                             SecondaryButton(
                                 text = if (ch.joined) "Joined ✓" else "Join",
                                 onClick = { onUpdateChallenge(ch, ch.currentValue, !ch.joined) },
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("challenge_join_${ch.id.ifBlank { ch.title }}")
                             )
-                            val stepIncrement = when (ch.category) {
-                                "steps" -> 2500.0
-                                "hydration" -> 1.0
-                                "workouts" -> 1.0
-                                else -> 2.0
-                            }
                             GradientButton(
-                                text = "Log +${stepIncrement.roundToInt()}",
+                                text = incrementButtonLabel,
                                 icon = Icons.Filled.Add,
                                 onClick = {
                                     onUpdateChallenge(ch, (ch.currentValue + stepIncrement).coerceAtMost(ch.targetValue), true)
                                 },
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("challenge_log_${ch.id.ifBlank { ch.title }}")
                             )
                         }
                     }

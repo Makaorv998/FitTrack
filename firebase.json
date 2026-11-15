@@ -1,7 +1,7 @@
 {
   "firestore": [
     {
-      "database": "ai-studio-android-fittrack-103d873d-fc2f-4ae5-8e7e-2ba44bf1bec0",
+      "database": "ai-studio-android-fittrack-4e6516d9-603b-40c4-9f48-6ac4872bdd53",
       "rules": "firestore.rules"
     }
   ],

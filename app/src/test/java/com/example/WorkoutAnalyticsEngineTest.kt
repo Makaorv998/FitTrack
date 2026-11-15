@@ -227,4 +227,69 @@ class WorkoutAnalyticsEngineTest {
         assertEquals(100, metrics.consistencyPercent)
         assertEquals(5200.0, metrics.totalWorkingVolumeKg, 0.001)
     }
+
+    @Test
+    fun detectNewPersonalRecords_handlesBodyweightMaxRepTieBreaker() {
+        val existingBwPr = PersonalRecord(
+            id = "ex_pull_ups",
+            exerciseId = "ex_pull_ups",
+            exerciseName = "Pull-Ups",
+            primaryMuscle = "Back",
+            weightKg = 0.0,
+            reps = 10L,
+            estimatedOneRmKg = 0.0
+        )
+        val records = listOf(
+            ExerciseSessionRecord(
+                exerciseId = "ex_pull_ups",
+                exerciseName = "Pull-Ups",
+                primaryMuscle = "Back",
+                sets = listOf(
+                    CompletedSetRecord(1, "working", 8L, 0.0),
+                    CompletedSetRecord(2, "working", 15L, 0.0),
+                    CompletedSetRecord(3, "working", 11L, 0.0)
+                )
+            )
+        )
+
+        val prs = WorkoutAnalyticsEngine.detectNewPersonalRecords("sess_bw", "2026-11-15", records, listOf(existingBwPr))
+        assertEquals(1, prs.size)
+        assertEquals(0.0, prs.first().weightKg, 0.001)
+        assertEquals(15L, prs.first().reps)
+    }
+
+    @Test
+    fun analyzeProgression_andFormatting_handleBodyweightAndImperialUnits() {
+        val entry = WorkoutExerciseEntry(
+            exerciseId = "ex_push_ups",
+            exerciseName = "Push-Ups",
+            muscleGroup = "Chest",
+            targetSets = 3L,
+            targetReps = 12L,
+            repRangeMin = 8L,
+            repRangeMax = 15L,
+            targetWeightKg = 0.0
+        )
+        val prior = WorkoutSessionLog(
+            id = "s_bw",
+            dateKey = "2026-11-14",
+            exerciseRecords = listOf(
+                ExerciseSessionRecord(
+                    exerciseId = "ex_push_ups",
+                    exerciseName = "Push-Ups",
+                    primaryMuscle = "Chest",
+                    sets = listOf(CompletedSetRecord(1, "working", 15L, 0.0))
+                )
+            )
+        )
+        val rec = WorkoutAnalyticsEngine.analyzeProgression(entry, listOf(prior), null)
+        assertFalse(rec.shouldDeload)
+        assertEquals(0.0, rec.suggestedWeightKg, 0.001)
+        assertEquals(16L, rec.suggestedReps)
+        assertTrue(rec.rationale.contains("Bodyweight progression"))
+
+        assertEquals("BW", WorkoutAnalyticsEngine.formatWeight(0.0, "imperial"))
+        assertTrue(WorkoutAnalyticsEngine.formatWeight(100.0, "imperial").endsWith("lb"))
+        assertTrue(WorkoutAnalyticsEngine.formatVolume(100.0, "imperial").endsWith("lb"))
+    }
 }

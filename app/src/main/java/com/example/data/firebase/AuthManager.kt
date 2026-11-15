@@ -126,9 +126,67 @@ object AuthManager {
                 } catch (e: Exception) {
                     Log.w(TAG, "Failed to clear credential state: ${e.message}")
                 } finally {
-                    Firebase.auth.signOut()
+                    runCatching { Firebase.auth.signOut() }
                     onSignOutComplete()
                 }
+            }
+        }
+    }
+
+    fun deleteCurrentAuthAccount(
+        context: Context,
+        credentialManager: CredentialManager,
+        scope: CoroutineScope,
+        onDeleted: () -> Unit,
+        onError: (String) -> Unit
+    ) {
+        scope.launch {
+            val user = runCatching { Firebase.auth.currentUser }.getOrNull()
+            if (user == null) {
+                onDeleted()
+                return@launch
+            }
+            try {
+                user.delete().await()
+                runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+                runCatching { Firebase.auth.signOut() }
+                onDeleted()
+            } catch (e: com.google.firebase.auth.FirebaseAuthRecentLoginRequiredException) {
+                val clientIdRes = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+                val clientId = if (clientIdRes != 0) context.getString(clientIdRes) else ""
+                if (clientId.isBlank()) {
+                    onError("Please sign in again to delete your account.")
+                    return@launch
+                }
+                try {
+                    val signInOption = GetSignInWithGoogleOption.Builder(serverClientId = clientId).build()
+                    val request = GetCredentialRequest.Builder()
+                        .addCredentialOption(signInOption)
+                        .build()
+                    val activity = context as? Activity
+                    val result = credentialManager.getCredential(activity ?: context, request)
+                    val credential = result.credential
+                    if (credential is CustomCredential && credential.type == TYPE_GOOGLE_ID_TOKEN_CREDENTIAL) {
+                        val googleIdToken = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                        val authCredential = GoogleAuthProvider.getCredential(googleIdToken, null)
+                        user.reauthenticate(authCredential).await()
+                        user.delete().await()
+                        runCatching { credentialManager.clearCredentialState(ClearCredentialStateRequest()) }
+                        runCatching { Firebase.auth.signOut() }
+                        onDeleted()
+                    } else {
+                        onError("Re-authentication required to finish deleting account.")
+                    }
+                } catch (reauthError: GetCredentialCancellationException) {
+                    Log.w(TAG, "Re-authentication cancelled during account deletion: ${reauthError.message}")
+                    onError("Account deletion paused — sign in with Google again if you want to remove the Firebase Auth account.")
+                } catch (reauthError: Exception) {
+                    Log.e(TAG, "Account re-authentication/deletion failed", reauthError)
+                    onError(reauthError.localizedMessage ?: "Failed to delete authentication account.")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Firebase Auth account delete failed", e)
+                onError(e.localizedMessage ?: "Failed to delete authentication account.")
             }
         }
     }

@@ -44,6 +44,7 @@ class StepCounterManager(context: Context) : SensorEventListener {
             val lastCounter = prefs.getLong("last_boot_counter", -1L)
             prefs.edit()
                 .putString("date_key", today)
+                .putBoolean("has_baseline", lastCounter >= 0L)
                 .putLong("daily_baseline", if (lastCounter >= 0L) lastCounter else 0L)
                 .putLong("daily_hardware_steps", 0L)
                 .putLong("manual_steps", 0L)
@@ -78,24 +79,7 @@ class StepCounterManager(context: Context) : SensorEventListener {
     }
 
     fun checkMidnightReset() {
-        val today = todayDateKey()
-        val current = _state.value
-        if (current.dateKey != today) {
-            val lastBoot = prefs.getLong("last_boot_counter", -1L)
-            val newBaseline = if (lastBoot >= 0L) lastBoot else 0L
-            prefs.edit()
-                .putString("date_key", today)
-                .putLong("daily_baseline", newBaseline)
-                .putLong("daily_hardware_steps", 0L)
-                .putLong("manual_steps", 0L)
-                .apply()
-            _state.value = current.copy(
-                dateKey = today,
-                dailyHardwareSteps = 0L,
-                manualSteps = 0L,
-                sensorBaseline = newBaseline
-            )
-        }
+        checkMidnightResetForDate(todayDateKey())
     }
 
     fun addManualSteps(deltaSteps: Long) {
@@ -117,32 +101,78 @@ class StepCounterManager(context: Context) : SensorEventListener {
         checkMidnightReset()
         if (event.sensor.type == Sensor.TYPE_STEP_COUNTER) {
             val totalSinceBoot = event.values.firstOrNull()?.toLong() ?: return
-            val lastBootCounter = prefs.getLong("last_boot_counter", -1L)
-            var baseline = prefs.getLong("daily_baseline", -1L)
-            var carriedSteps = prefs.getLong("daily_hardware_steps", 0L)
-
-            // Handle reboot (counter reset below previous reading) or first initialization
-            if (baseline < 0L || (lastBootCounter >= 0L && totalSinceBoot < lastBootCounter)) {
-                baseline = totalSinceBoot - carriedSteps
-                if (baseline < 0L) baseline = 0L
-            }
-
-            val computedDaily = (totalSinceBoot - baseline).coerceAtLeast(carriedSteps)
-            prefs.edit()
-                .putLong("last_boot_counter", totalSinceBoot)
-                .putLong("daily_baseline", baseline)
-                .putLong("daily_hardware_steps", computedDaily)
-                .apply()
-
-            _state.value = _state.value.copy(
-                dailyHardwareSteps = computedDaily,
-                sensorBaseline = baseline
-            )
+            handleStepCounterSample(totalSinceBoot)
         } else if (event.sensor.type == Sensor.TYPE_STEP_DETECTOR && stepCounterSensor == null) {
             val updated = _state.value.dailyHardwareSteps + 1L
             prefs.edit().putLong("daily_hardware_steps", updated).apply()
             _state.value = _state.value.copy(dailyHardwareSteps = updated)
         }
+    }
+
+    internal fun handleStepCounterSample(totalSinceBoot: Long, dateOverride: String? = null) {
+        if (dateOverride != null) {
+            checkMidnightResetForDate(dateOverride)
+        } else {
+            checkMidnightReset()
+        }
+        val lastBootCounter = prefs.getLong("last_boot_counter", -1L)
+        val hasBaseline = prefs.getBoolean("has_baseline", false)
+        var baseline = prefs.getLong("daily_baseline", 0L)
+        val carriedSteps = prefs.getLong("daily_hardware_steps", 0L)
+
+        // Handle first initialization or device reboot (counter reset below previous reading)
+        if (!hasBaseline || lastBootCounter < 0L || totalSinceBoot < lastBootCounter) {
+            baseline = totalSinceBoot - carriedSteps
+        }
+
+        val computedDaily = (totalSinceBoot - baseline).coerceAtLeast(carriedSteps)
+        prefs.edit()
+            .putLong("last_boot_counter", totalSinceBoot)
+            .putBoolean("has_baseline", true)
+            .putLong("daily_baseline", baseline)
+            .putLong("daily_hardware_steps", computedDaily)
+            .apply()
+
+        _state.value = _state.value.copy(
+            dailyHardwareSteps = computedDaily,
+            sensorBaseline = baseline
+        )
+    }
+
+    internal fun checkMidnightResetForDate(today: String) {
+        val current = _state.value
+        if (current.dateKey != today) {
+            val lastBoot = prefs.getLong("last_boot_counter", -1L)
+            val newBaseline = if (lastBoot >= 0L) lastBoot else 0L
+            prefs.edit()
+                .putString("date_key", today)
+                .putBoolean("has_baseline", lastBoot >= 0L)
+                .putLong("daily_baseline", newBaseline)
+                .putLong("daily_hardware_steps", 0L)
+                .putLong("manual_steps", 0L)
+                .apply()
+            _state.value = current.copy(
+                dateKey = today,
+                dailyHardwareSteps = 0L,
+                manualSteps = 0L,
+                sensorBaseline = newBaseline
+            )
+        }
+    }
+
+    fun resetForAccountDeletion() {
+        stopListening()
+        val today = todayDateKey()
+        prefs.edit().clear().putString("date_key", today).apply()
+        _state.value = StepSensorState(
+            dateKey = today,
+            hardwareAvailable = stepCounterSensor != null || stepDetectorSensor != null,
+            detectorAvailable = stepDetectorSensor != null,
+            dailyHardwareSteps = 0L,
+            manualSteps = 0L,
+            sensorBaseline = 0L,
+            isListening = false
+        )
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) = Unit

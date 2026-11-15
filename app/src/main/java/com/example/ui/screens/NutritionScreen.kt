@@ -94,6 +94,7 @@ import com.example.data.model.MealLog
 import com.example.data.model.UserProfile
 import com.example.data.model.WaterLog
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.platform.NutritionPreferences
 import com.example.platform.PlannedMealEntry
 import com.example.platform.RecentFoodEntry
@@ -144,6 +145,7 @@ fun NutritionScreen(
     onSaveCustomFood: (FoodItem) -> Unit,
     onToggleFavorite: (FoodItem) -> Unit,
     onAddWater: (Long) -> Unit,
+    onDeleteWaterLog: (String) -> Unit = {},
     onSaveNutritionPreferences: (NutritionPreferences) -> Unit = {},
     onSaveRecipe: (SavedRecipe) -> Unit = {},
     onDeleteRecipe: (String) -> Unit = {},
@@ -154,9 +156,12 @@ fun NutritionScreen(
     onOpenAiMealPlanner: () -> Unit
 ) {
     val ext = LocalFitTrackColors.current
+    val unitSystem = profile?.unitSystem ?: "metric"
+    val isImperial = UnitFormatter.isImperial(unitSystem)
     val today = remember { todayDateKey() }
     val todayMeals = remember(meals, today) { meals.filter { it.dateKey == today } }
-    val todayWater = remember(waterLogs, today) { waterLogs.filter { it.dateKey == today }.sumOf { it.amountMl } }
+    val todayWaterLogs = remember(waterLogs, today) { waterLogs.filter { it.dateKey == today } }
+    val todayWater = remember(todayWaterLogs) { todayWaterLogs.sumOf { it.amountMl } }
     val waterGoal = (profile?.dailyWaterTargetMl ?: 2500L).coerceAtLeast(500L)
     val calorieGoal = (profile?.dailyCalorieTarget ?: 2200L).coerceAtLeast(1200L)
 
@@ -275,6 +280,7 @@ fun NutritionScreen(
                                 mealType = planned.mealType,
                                 foodName = planned.title,
                                 grams = planned.grams,
+                                measurementUnit = planned.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g",
                                 calories = planned.calories,
                                 proteinG = planned.proteinG,
                                 carbsG = planned.carbsG,
@@ -421,22 +427,34 @@ fun NutritionScreen(
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text("Hydration Tracker", style = MaterialTheme.typography.titleMedium)
                                     Text(
-                                        text = "$todayWater / $waterGoal ml",
+                                        text = UnitFormatter.formatWaterRatio(todayWater, waterGoal, unitSystem),
                                         style = MaterialTheme.typography.titleLarge,
                                         color = MaterialTheme.colorScheme.secondary
                                     )
                                     Spacer(modifier = Modifier.height(6.dp))
+                                    val smallDoseMl = if (isImperial) 237L else 250L
+                                    val largeDoseMl = if (isImperial) 473L else 500L
+                                    val smallLabel = if (isImperial) "+8 fl oz" else "+250 ml"
+                                    val largeLabel = if (isImperial) "+16 fl oz" else "+500 ml"
                                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                         SecondaryButton(
-                                            text = "+250 ml",
-                                            onClick = { onAddWater(250L) },
+                                            text = smallLabel,
+                                            onClick = { onAddWater(smallDoseMl) },
                                             modifier = Modifier.weight(1f)
                                         )
                                         SecondaryButton(
-                                            text = "+500 ml",
-                                            onClick = { onAddWater(500L) },
+                                            text = largeLabel,
+                                            onClick = { onAddWater(largeDoseMl) },
                                             modifier = Modifier.weight(1f)
                                         )
+                                    }
+                                    todayWaterLogs.firstOrNull()?.let { latestWater ->
+                                        TextButton(
+                                            onClick = { onDeleteWaterLog(latestWater.id) },
+                                            modifier = Modifier.testTag("undo_water_button")
+                                        ) {
+                                            Text("Undo last (${UnitFormatter.formatWater(latestWater.amountMl, unitSystem)})")
+                                        }
                                     }
                                 }
                             }
@@ -500,8 +518,9 @@ fun NutritionScreen(
                                     ) {
                                         Column(modifier = Modifier.weight(1f)) {
                                             Text(meal.foodName, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                                            val unitLabel = meal.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                                             Text(
-                                                "${meal.grams.toInt()}g • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
+                                                "${meal.grams.toInt()}$unitLabel • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -597,8 +616,9 @@ fun NutritionScreen(
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(food.name, style = MaterialTheme.typography.titleMedium)
                                         Spacer(modifier = Modifier.height(2.dp))
+                                        val unitLabel = food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                                         Text(
-                                            text = "${food.caloriesPer100g.toInt()} kcal/100g • P ${food.proteinPer100g.toInt()}g • C ${food.carbsPer100g.toInt()}g • F ${food.fatPer100g.toInt()}g",
+                                            text = "${food.caloriesPer100g.toInt()} kcal/100$unitLabel • P ${food.proteinPer100g.toInt()}g • C ${food.carbsPer100g.toInt()}g • F ${food.fatPer100g.toInt()}g",
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -665,8 +685,8 @@ fun NutritionScreen(
             food = food,
             initialMealType = selectedTargetMealType,
             onDismiss = { selectedFoodForLog = null },
-            onConfirm = { grams, mealType ->
-                onLogFoodWithDate(food, grams, mealType, selectedTargetDateKey)
+            onConfirm = { grams, unit, mealType ->
+                onLogFoodWithDate(food.copy(measurementUnit = unit), grams, mealType, selectedTargetDateKey)
                 selectedFoodForLog = null
             }
         )
@@ -754,10 +774,10 @@ private fun QuickAddFoodSheet(
                 OutlinedTextField(
                     value = gramsText,
                     onValueChange = { gramsText = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Grams") },
+                    label = { Text("Amount (g/ml)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    modifier = Modifier.weight(0.8f)
+                    modifier = Modifier.weight(0.9f)
                 )
             }
             FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -805,7 +825,8 @@ private fun QuickAddFoodSheet(
                         Row(modifier = Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(food.name, style = MaterialTheme.typography.titleSmall)
-                                Text("${food.caloriesPer100g.toInt()} kcal/100g • P ${food.proteinPer100g.toInt()}g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                                val u = food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
+                                Text("${food.caloriesPer100g.toInt()} kcal/100$u • P ${food.proteinPer100g.toInt()}g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                             }
                             Icon(Icons.Filled.Add, contentDescription = "Log ${food.name}", tint = MaterialTheme.colorScheme.primary)
                         }
@@ -832,9 +853,10 @@ private fun LogFoodDialog(
     food: FoodItem,
     initialMealType: String = "lunch",
     onDismiss: () -> Unit,
-    onConfirm: (Double, String) -> Unit
+    onConfirm: (Double, String, String) -> Unit
 ) {
     var gramsText by remember { mutableStateOf(food.servingSizeGrams.toInt().toString()) }
+    var unit by remember(food) { mutableStateOf(food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g") }
     var mealType by remember { mutableStateOf(initialMealType) }
     val grams = (gramsText.toDoubleOrNull() ?: food.servingSizeGrams).coerceIn(1.0, 5000.0)
     val factor = grams / 100.0
@@ -849,14 +871,18 @@ private fun LogFoodDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.secondary
                 )
-                OutlinedTextField(
-                    value = gramsText,
-                    onValueChange = { gramsText = it },
-                    label = { Text("Weight (grams)") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = gramsText,
+                        onValueChange = { gramsText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text(if (unit == "ml") "Volume (ml)" else "Weight (g)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        singleLine = true,
+                        modifier = Modifier.weight(1f)
+                    )
+                    FilterChip(selected = unit == "g", onClick = { unit = "g" }, label = { Text("g") })
+                    FilterChip(selected = unit == "ml", onClick = { unit = "ml" }, label = { Text("ml") })
+                }
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf("breakfast", "lunch", "dinner", "snack").forEach { type ->
                         FilterChip(
@@ -869,7 +895,7 @@ private fun LogFoodDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(grams, mealType) }) { Text("Log Food") }
+            Button(onClick = { onConfirm(grams, unit, mealType) }) { Text("Log Food") }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) { Text("Cancel") }
@@ -884,14 +910,15 @@ private fun EditMealDialog(
     onSave: (Double) -> Unit
 ) {
     var gramsText by remember { mutableStateOf(meal.grams.toInt().toString()) }
+    val unitLabel = meal.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Edit ${meal.foodName}") },
         text = {
             OutlinedTextField(
                 value = gramsText,
-                onValueChange = { gramsText = it },
-                label = { Text("New weight (grams)") },
+                onValueChange = { gramsText = it.filter { c -> c.isDigit() || c == '.' } },
+                label = { Text("New amount ($unitLabel)") },
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 modifier = Modifier.fillMaxWidth()
@@ -909,12 +936,14 @@ private fun EditMealDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun CreateCustomFoodDialog(
     onDismiss: () -> Unit,
     onSave: (FoodItem) -> Unit
 ) {
     var name by remember { mutableStateOf("") }
+    var unit by remember { mutableStateOf("g") }
     var cals by remember { mutableStateOf("200") }
     var protein by remember { mutableStateOf("15") }
     var carbs by remember { mutableStateOf("20") }
@@ -922,10 +951,14 @@ private fun CreateCustomFoodDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Create Custom Food (per 100g)") },
+        title = { Text("Create Custom Food (per 100$unit)") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Food name") }, singleLine = true)
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    FilterChip(selected = unit == "g", onClick = { unit = "g" }, label = { Text("Grams (g)") })
+                    FilterChip(selected = unit == "ml", onClick = { unit = "ml" }, label = { Text("Milliliters (ml)") })
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = cals, onValueChange = { cals = it }, label = { Text("kcal") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f), singleLine = true)
                     OutlinedTextField(value = protein, onValueChange = { protein = it }, label = { Text("Protein g") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal), modifier = Modifier.weight(1f), singleLine = true)
@@ -938,11 +971,14 @@ private fun CreateCustomFoodDialog(
         },
         confirmButton = {
             Button(
+                enabled = name.isNotBlank(),
                 onClick = {
                     if (name.isNotBlank()) {
                         onSave(
                             FoodItem(
                                 name = name.trim(),
+                                servingLabel = "100$unit",
+                                measurementUnit = unit,
                                 caloriesPer100g = (cals.toDoubleOrNull() ?: 200.0).coerceIn(0.0, 1500.0),
                                 proteinPer100g = (protein.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 100.0),
                                 carbsPer100g = (carbs.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 100.0),
@@ -972,6 +1008,7 @@ fun AiFoodScannerScreen(
     val context = LocalContext.current
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var selectedMealType by remember { mutableStateOf("lunch") }
+    var cameraPermissionDenied by remember { mutableStateOf(false) }
     val primaryColor = MaterialTheme.colorScheme.primary
     val secondaryColor = MaterialTheme.colorScheme.secondary
 
@@ -987,6 +1024,7 @@ fun AiFoodScannerScreen(
     val cameraPermissionLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
+        cameraPermissionDenied = !granted
         if (granted) cameraLauncher.launch(null)
     }
 
@@ -1117,6 +1155,12 @@ fun AiFoodScannerScreen(
                                 .testTag("pick_food_photo_button")
                         )
                     }
+                    if (cameraPermissionDenied) {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        ErrorBannerCard(
+                            message = "Camera permission was denied. You can still pick an image using Photo Picker."
+                        )
+                    }
                 }
 
                 when (scanState) {
@@ -1139,6 +1183,16 @@ fun AiFoodScannerScreen(
 
                     is AsyncState.Error -> {
                         ErrorBannerCard(message = scanState.message)
+                        previewBitmap?.let { bmp ->
+                            SecondaryButton(
+                                text = "Retry Image Analysis",
+                                icon = Icons.Filled.AutoAwesome,
+                                onClick = { onScanBitmap(bmp) },
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("retry_food_scan_button")
+                            )
+                        }
                     }
 
                     is AsyncState.Success -> {
@@ -1159,7 +1213,7 @@ fun AiFoodScannerScreen(
                                     FilterChip(
                                         selected = selectedMealType == type,
                                         onClick = { selectedMealType = type },
-                                        label = { Text(type.replaceFirstChar { it.uppercase() }) }
+                                        label = { Text(if (type == "snack") "Snacks" else type.replaceFirstChar { it.uppercase() }) }
                                     )
                                 }
                             }
@@ -1168,10 +1222,12 @@ fun AiFoodScannerScreen(
                         result.items.forEachIndexed { idx, item ->
                             var editName by remember(idx, item.name) { mutableStateOf(item.name) }
                             var editGrams by remember(idx, item.estimatedGrams) { mutableStateOf(item.estimatedGrams.toInt().toString()) }
+                            var editUnit by remember(idx, item.name) { mutableStateOf("g") }
                             var editCals by remember(idx, item.calories) { mutableStateOf(item.calories.toInt().toString()) }
                             var editProtein by remember(idx, item.proteinG) { mutableStateOf(item.proteinG.toInt().toString()) }
                             var editCarbs by remember(idx, item.carbsG) { mutableStateOf(item.carbsG.toInt().toString()) }
                             var editFat by remember(idx, item.fatG) { mutableStateOf(item.fatG.toInt().toString()) }
+                            var itemLogged by remember(idx, item.name) { mutableStateOf(false) }
 
                             FitTrackCard(modifier = Modifier.fillMaxWidth()) {
                                 OutlinedTextField(
@@ -1182,11 +1238,16 @@ fun AiFoodScannerScreen(
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Spacer(modifier = Modifier.height(6.dp))
+                                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                    FilterChip(selected = editUnit == "g", onClick = { editUnit = "g" }, label = { Text("g") })
+                                    FilterChip(selected = editUnit == "ml", onClick = { editUnit = "ml" }, label = { Text("ml") })
+                                }
+                                Spacer(modifier = Modifier.height(6.dp))
                                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                     OutlinedTextField(
                                         value = editGrams,
                                         onValueChange = { editGrams = it.filter { c -> c.isDigit() || c == '.' } },
-                                        label = { Text("Grams") },
+                                        label = { Text("Amount ($editUnit)") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                         singleLine = true,
                                         modifier = Modifier.weight(1f)
@@ -1237,7 +1298,7 @@ fun AiFoodScannerScreen(
                                 }
                                 Spacer(modifier = Modifier.height(10.dp))
                                 GradientButton(
-                                    text = "Confirm & Log Item",
+                                    text = if (itemLogged) "Logged to ${selectedMealType.replaceFirstChar { it.uppercase() }}" else "Confirm & Log Item",
                                     icon = Icons.Filled.Check,
                                     onClick = {
                                         onConfirmLogMeal(
@@ -1245,6 +1306,7 @@ fun AiFoodScannerScreen(
                                                 mealType = selectedMealType,
                                                 foodName = editName.trim().ifBlank { item.name },
                                                 grams = (editGrams.toDoubleOrNull() ?: item.estimatedGrams).coerceIn(1.0, 5000.0),
+                                                measurementUnit = editUnit,
                                                 calories = (editCals.toDoubleOrNull() ?: item.calories).coerceAtLeast(0.0),
                                                 proteinG = (editProtein.toDoubleOrNull() ?: item.proteinG).coerceAtLeast(0.0),
                                                 carbsG = (editCarbs.toDoubleOrNull() ?: item.carbsG).coerceAtLeast(0.0),
@@ -1254,6 +1316,7 @@ fun AiFoodScannerScreen(
                                                 source = "ai_scan"
                                             )
                                         )
+                                        itemLogged = true
                                     },
                                     modifier = Modifier.fillMaxWidth()
                                 )
@@ -1273,6 +1336,7 @@ fun AiMealPlannerScreen(
     nutritionPreferences: NutritionPreferences = NutritionPreferences(),
     onGenerate: (String, String) -> Unit,
     onLogSuggestion: (MealLog) -> Unit,
+    onSaveToPlan: (PlannedMealEntry) -> Unit = {},
     onBack: () -> Unit
 ) {
     var preferences by remember(nutritionPreferences.dietaryStyle) {
@@ -1348,7 +1412,15 @@ fun AiMealPlannerScreen(
                     AsyncState.Loading, is AsyncState.Streaming -> {
                         SkeletonFoodList()
                     }
-                    is AsyncState.Error -> ErrorBannerCard(message = state.message)
+                    is AsyncState.Error -> {
+                        ErrorBannerCard(message = state.message)
+                        SecondaryButton(
+                            text = "Retry Meal Plan",
+                            icon = Icons.Filled.AutoAwesome,
+                            onClick = { onGenerate(preferences, allergies) },
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    }
                     is AsyncState.Success -> {
                         val plan = state.data
                         GlassCard(modifier = Modifier.fillMaxWidth()) {
@@ -1373,25 +1445,46 @@ fun AiMealPlannerScreen(
                                     color = MaterialTheme.colorScheme.secondary
                                 )
                                 Spacer(modifier = Modifier.height(10.dp))
-                                SecondaryButton(
-                                    text = "Confirm & Log Meal",
-                                    icon = Icons.Filled.Check,
-                                    onClick = {
-                                        onLogSuggestion(
-                                            MealLog(
-                                                mealType = suggestion.mealType,
-                                                foodName = suggestion.title,
-                                                grams = suggestion.grams,
-                                                calories = suggestion.calories,
-                                                proteinG = suggestion.proteinG,
-                                                carbsG = suggestion.carbsG,
-                                                fatG = suggestion.fatG,
-                                                source = "ai_plan"
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SecondaryButton(
+                                        text = "Confirm & Log Meal",
+                                        icon = Icons.Filled.Check,
+                                        onClick = {
+                                            onLogSuggestion(
+                                                MealLog(
+                                                    mealType = suggestion.mealType,
+                                                    foodName = suggestion.title,
+                                                    grams = suggestion.grams,
+                                                    calories = suggestion.calories,
+                                                    proteinG = suggestion.proteinG,
+                                                    carbsG = suggestion.carbsG,
+                                                    fatG = suggestion.fatG,
+                                                    source = "ai_plan"
+                                                )
                                             )
-                                        )
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    OutlinedButton(
+                                        onClick = {
+                                            onSaveToPlan(
+                                                PlannedMealEntry(
+                                                    dayOfWeek = "Monday",
+                                                    mealType = suggestion.mealType,
+                                                    title = suggestion.title,
+                                                    grams = suggestion.grams,
+                                                    calories = suggestion.calories,
+                                                    proteinG = suggestion.proteinG,
+                                                    carbsG = suggestion.carbsG,
+                                                    fatG = suggestion.fatG
+                                                )
+                                            )
+                                        },
+                                        modifier = Modifier.weight(0.85f)
+                                    ) {
+                                        Text("Save to Plan")
+                                    }
+                                }
                             }
                         }
                     }

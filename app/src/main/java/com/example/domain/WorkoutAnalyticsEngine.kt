@@ -152,6 +152,20 @@ object WorkoutAnalyticsEngine {
         }
 
         return when {
+            stagnantOrFatigued && lastTopSet.weightKg <= 0.0 -> {
+                val recoveryReps = (entry.repRangeMin - 1L).coerceAtLeast(1L)
+                ProgressionRecommendation(
+                    exerciseName = entry.exerciseName,
+                    previousBestWeightKg = 0.0,
+                    previousBestReps = lastTopSet.reps,
+                    previousSessionSummary = "Last: $prevSummary",
+                    suggestedWeightKg = 0.0,
+                    suggestedReps = recoveryReps,
+                    rationale = "Bodyweight reps dropped below target range across consecutive sessions. Focus on recovery and stop 2 reps shy of failure today.",
+                    shouldDeload = true,
+                    hasActionableIncrease = false
+                )
+            }
             stagnantOrFatigued -> {
                 val deloadWeight = (lastTopSet.weightKg * 0.85).let { roundToHalfKg(it) }
                 ProgressionRecommendation(
@@ -182,6 +196,11 @@ object WorkoutAnalyticsEngine {
             }
             else -> {
                 val nextReps = (lastTopSet.reps + 1L).coerceIn(entry.repRangeMin, entry.repRangeMax + 2)
+                val rationaleText = if (lastTopSet.weightKg <= 0.0) {
+                    "Bodyweight progression: aim for +1 rep per set (or slow down eccentric tempo) toward ${entry.repRangeMax + 2} reps."
+                } else {
+                    "Keep load at ${formatWeight(lastTopSet.weightKg)} and aim for +1 rep per set before adding weight."
+                }
                 ProgressionRecommendation(
                     exerciseName = entry.exerciseName,
                     previousBestWeightKg = lastTopSet.weightKg,
@@ -189,7 +208,7 @@ object WorkoutAnalyticsEngine {
                     previousSessionSummary = "Last: $prevSummary",
                     suggestedWeightKg = lastTopSet.weightKg,
                     suggestedReps = nextReps,
-                    rationale = "Keep load at ${formatWeight(lastTopSet.weightKg)} and aim for +1 rep per set before adding weight.",
+                    rationale = rationaleText,
                     shouldDeload = false,
                     hasActionableIncrease = nextReps > entry.targetReps || lastTopSet.weightKg > entry.targetWeightKg
                 )
@@ -229,19 +248,19 @@ object WorkoutAnalyticsEngine {
             if (ex.skipped) continue
             val working = ex.sets.filter { !it.setType.equals("warmup", ignoreCase = true) && it.reps > 0L }
             if (working.isEmpty()) continue
-            val bestSet = working.maxByOrNull { estimateOneRmKg(it.weightKg, it.reps) } ?: continue
+            val bestSet = working.maxByOrNull { estimateOneRmKg(it.weightKg, it.reps) * 1000.0 + it.reps } ?: continue
             val bestOneRm = estimateOneRmKg(bestSet.weightKg, bestSet.reps)
             val bestSetVol = calculateSetVolume(bestSet.weightKg, bestSet.reps)
 
             val prevBest = existingPrs
                 .filter { it.exerciseId == ex.exerciseId || it.exerciseName.equals(ex.exerciseName, ignoreCase = true) }
-                .maxByOrNull { it.estimatedOneRmKg }
+                .maxByOrNull { it.estimatedOneRmKg * 1000.0 + it.reps }
 
             val beatOneRm = prevBest == null && (bestSet.weightKg > 0.0 || bestSet.reps >= 1L)
             val beatExisting = prevBest != null && (
                 bestOneRm > prevBest.estimatedOneRmKg + 0.1 ||
                     bestSet.weightKg > prevBest.weightKg + 0.1 ||
-                    (bestSet.weightKg == prevBest.weightKg && bestSet.reps > prevBest.reps)
+                    (kotlin.math.abs(bestSet.weightKg - prevBest.weightKg) <= 0.01 && bestSet.reps > prevBest.reps)
                 )
 
             if (beatOneRm || beatExisting) {
@@ -400,4 +419,12 @@ object WorkoutAnalyticsEngine {
 
     fun formatWeight(kg: Double): String =
         if (kg <= 0.0) "BW" else if (kg % 1.0 == 0.0) "${kg.toInt()} kg" else String.format(Locale.US, "%.1f kg", kg)
+
+    fun formatWeight(kg: Double, unitSystem: String): String =
+        if (kg <= 0.0) "BW" else UnitFormatter.formatWeight(kg, unitSystem)
+
+    fun formatVolume(kg: Double, unitSystem: String): String {
+        val displayVal = UnitFormatter.kgToDisplayWeight(kg.coerceAtLeast(0.0), unitSystem).roundToInt()
+        return "$displayVal ${UnitFormatter.weightUnitLabel(unitSystem)}"
+    }
 }

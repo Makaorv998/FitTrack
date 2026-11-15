@@ -43,6 +43,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.catalog.WorkoutCatalog
 import com.example.data.model.ExerciseDefinition
 import com.example.data.model.WorkoutSessionLog
+import com.example.domain.UnitFormatter
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.ui.AsyncState
 import com.example.ui.components.EmptyStateCard
@@ -61,6 +62,7 @@ import com.example.ui.theme.LocalFitTrackColors
 @Composable
 fun ExerciseLibraryView(
     sessions: List<WorkoutSessionLog>,
+    unitSystem: String = "metric",
     aiSubstitutionsState: AsyncState<String>,
     onRequestAiSubstitutions: (exerciseName: String, muscleGroup: String, equipment: String, reason: String) -> Unit,
     onResetAiSubstitutions: () -> Unit
@@ -228,6 +230,7 @@ fun ExerciseLibraryView(
         ExerciseDetailSheet(
             exercise = ex,
             sessions = sessions,
+            unitSystem = unitSystem,
             aiSubstitutionsState = aiSubstitutionsState,
             onRequestAiSubstitutions = onRequestAiSubstitutions,
             onSelectAlternative = { alt ->
@@ -247,6 +250,7 @@ fun ExerciseLibraryView(
 private fun ExerciseDetailSheet(
     exercise: ExerciseDefinition,
     sessions: List<WorkoutSessionLog>,
+    unitSystem: String = "metric",
     aiSubstitutionsState: AsyncState<String>,
     onRequestAiSubstitutions: (String, String, String, String) -> Unit,
     onSelectAlternative: (ExerciseDefinition) -> Unit,
@@ -354,14 +358,16 @@ private fun ExerciseDetailSheet(
                 } else {
                     if (history.isNotEmpty()) {
                         TrendLineChart(
-                            points = history.map { it.dateKey.takeLast(5) to it.estimatedOneRmKg.toFloat() },
+                            points = history.map {
+                                it.dateKey.takeLast(5) to UnitFormatter.kgToDisplayWeight(it.estimatedOneRmKg, unitSystem).toFloat()
+                            },
                             lineColor = MaterialTheme.colorScheme.secondary
                         )
                         Spacer(modifier = Modifier.height(10.dp))
                     }
                     recentSessionMatches.forEach { (session, rec) ->
                         val summary = rec.sets.joinToString(" • ") { s ->
-                            "${WorkoutAnalyticsEngine.formatWeight(s.weightKg)}×${s.reps}"
+                            "${WorkoutAnalyticsEngine.formatWeight(s.weightKg, unitSystem)}×${s.reps}"
                         }
                         Surface(
                             shape = MaterialTheme.shapes.small,

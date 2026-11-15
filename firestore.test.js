@@ -313,4 +313,122 @@ test("Public can read published app_releases and app_config; non-admins cannot w
   );
 });
 
+test("Owner can manage recipe/meal_plan meals, ml units, goal_history, recipes, planned_meals, and preferences; cross-user denied", async () => {
+  const aliceDb = testEnv.authenticatedContext(ALICE_UID).firestore();
+  const bobDb = testEnv.authenticatedContext(BOB_UID).firestore();
+  const aliceDoc = aliceDb.collection("users").doc(ALICE_UID);
+  const ts = nowTs();
+
+  await assertSucceeds(
+    aliceDoc.collection("meals").doc("meal_recipe").set({
+      userId: ALICE_UID,
+      dateKey: "2026-11-15",
+      mealType: "lunch",
+      foodName: "Protein Shake (1.0 srv)",
+      grams: 350.0,
+      measurementUnit: "ml",
+      calories: 280.0,
+      proteinG: 32.0,
+      carbsG: 18.0,
+      fatG: 5.0,
+      fiberG: 2.0,
+      sugarG: 6.0,
+      source: "recipe",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDoc.collection("meals").doc("meal_plan_1").set({
+      userId: ALICE_UID,
+      dateKey: "2026-11-15",
+      mealType: "dinner",
+      foodName: "Salmon Bowl",
+      grams: 400.0,
+      calories: 560.0,
+      proteinG: 42.0,
+      carbsG: 48.0,
+      fatG: 22.0,
+      fiberG: 6.0,
+      sugarG: 4.0,
+      source: "meal_plan",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDoc.collection("goal_history").doc("goal_1").set({
+      userId: ALICE_UID,
+      goalType: "endurance",
+      title: "Run 10K under 50 min",
+      status: "active",
+      targetValue: 10.0,
+      currentValue: 6.5,
+      unit: "km",
+      targetDateKey: "2026-12-31",
+      notes: "Build aerobic base",
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDoc.collection("recipes").doc("rec_1").set({
+      userId: ALICE_UID,
+      name: "Green Recovery Smoothie",
+      servings: 1,
+      notes: "Post-run shake",
+      measurementUnit: "ml",
+      ingredients: [{ foodName: "Milk", grams: 300, calories: 150 }],
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDoc.collection("planned_meals").doc("pm_1").set({
+      userId: ALICE_UID,
+      dayOfWeek: "Monday",
+      mealType: "breakfast",
+      title: "Greek Yogurt Parfait",
+      grams: 250.0,
+      measurementUnit: "g",
+      calories: 310.0,
+      proteinG: 24.0,
+      carbsG: 34.0,
+      fatG: 8.0,
+      createdAt: ts,
+      updatedAt: ts,
+    })
+  );
+
+  await assertSucceeds(
+    aliceDoc.collection("preferences").doc("notifications").set({
+      userId: ALICE_UID,
+      prefType: "notifications",
+      payloadJson: JSON.stringify({ hydrationRemindersEnabled: true }),
+      updatedAt: ts,
+    })
+  );
+
+  // Unknown prefType rejected
+  await assertFails(
+    aliceDoc.collection("preferences").doc("unknown_pref").set({
+      userId: ALICE_UID,
+      prefType: "unknown_pref",
+      payloadJson: "{}",
+      updatedAt: ts,
+    })
+  );
+
+  // Cross-user isolation
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("goal_history").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("recipes").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("planned_meals").get());
+  await assertFails(bobDb.collection("users").doc(ALICE_UID).collection("preferences").get());
+});
+
+
 

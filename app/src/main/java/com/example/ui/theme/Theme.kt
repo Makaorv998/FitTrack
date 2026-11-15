@@ -86,6 +86,8 @@ private val FitTrackLightColorScheme = lightColorScheme(
     onError = Color.White
 )
 
+val LocalReducedMotionOverride = staticCompositionLocalOf { false }
+
 val FitTrackShapes = Shapes(
     small = RoundedCornerShape(FitTrackRadius.sm),
     medium = RoundedCornerShape(FitTrackRadius.md),
@@ -96,6 +98,7 @@ val FitTrackShapes = Shapes(
 @Composable
 fun FitTrackTheme(
     themePreference: String = "dark",
+    reducedMotionOverride: Boolean = false,
     content: @Composable () -> Unit
 ) {
     val useDark = when (themePreference.lowercase()) {
@@ -135,7 +138,10 @@ fun FitTrackTheme(
         )
     }
 
-    CompositionLocalProvider(LocalFitTrackColors provides extendedColors) {
+    CompositionLocalProvider(
+        LocalFitTrackColors provides extendedColors,
+        LocalReducedMotionOverride provides reducedMotionOverride
+    ) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = AppTypography,

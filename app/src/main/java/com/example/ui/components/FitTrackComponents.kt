@@ -773,6 +773,39 @@ fun ErrorBannerCard(
 }
 
 @Composable
+fun OfflineStatusBanner(
+    modifier: Modifier = Modifier
+) {
+    val ext = LocalFitTrackColors.current
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("offline_status_banner"),
+        shape = MaterialTheme.shapes.small,
+        color = ext.warning.copy(alpha = 0.14f),
+        border = BorderStroke(1.dp, ext.warning.copy(alpha = 0.45f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.Info,
+                contentDescription = "Offline mode",
+                tint = ext.warning
+            )
+            Text(
+                text = "Offline mode — changes are cached locally and will sync when back online.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+        }
+    }
+}
+
+@Composable
 fun EmptyStateCard(
     icon: ImageVector,
     title: String,

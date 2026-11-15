@@ -37,6 +37,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -50,6 +51,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -57,6 +59,7 @@ import com.example.BuildConfig
 import com.example.data.model.GpsActivity
 import com.example.data.model.LatLngPoint
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.ui.branding.FitTrackIllustrationType
 import com.example.ui.components.AuroraAmbientBackground
 import com.example.ui.components.DisclaimerBanner
@@ -68,6 +71,7 @@ import com.example.ui.components.SectionHeader
 import com.example.ui.components.StatusBadge
 import com.example.ui.components.rememberLocationPermissionState
 import com.example.ui.theme.LocalFitTrackColors
+import com.google.android.gms.location.LocationServices
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
 import com.google.maps.android.compose.GoogleMap
@@ -77,6 +81,7 @@ import com.google.maps.android.compose.Marker
 import com.google.maps.android.compose.MarkerState
 import com.google.maps.android.compose.Polyline
 import com.google.maps.android.compose.rememberCameraPositionState
+import kotlinx.coroutines.tasks.await
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,9 +95,11 @@ import java.util.Locale
 fun ActivityMapScreen(
     gpsHistory: List<GpsActivity>,
     initialActivityId: String? = null,
+    unitSystem: String = "metric",
     onBack: () -> Unit
 ) {
     val ext = LocalFitTrackColors.current
+    val context = LocalContext.current
     val orderedHistory = remember(gpsHistory) {
         gpsHistory.sortedByDescending { it.startedAtMs }
     }
@@ -107,6 +114,18 @@ fun ActivityMapScreen(
     }
 
     val locationPermissionState = rememberLocationPermissionState { _, _ -> }
+    var lastKnownLatLng by remember { mutableStateOf<LatLng?>(null) }
+    LaunchedEffect(locationPermissionState.hasAnyLocation) {
+        if (locationPermissionState.hasAnyLocation) {
+            runCatching {
+                @Suppress("MissingPermission")
+                val loc = LocationServices.getFusedLocationProviderClient(context).lastLocation.await()
+                if (loc != null) {
+                    lastKnownLatLng = LatLng(loc.latitude, loc.longitude)
+                }
+            }
+        }
+    }
     val hasMapsApiKey = remember {
         BuildConfig.MAPS_API_KEY.isNotBlank() && BuildConfig.MAPS_API_KEY != "MY_MAPS_API_KEY"
     }
@@ -186,7 +205,7 @@ fun ActivityMapScreen(
                                 .clip(MaterialTheme.shapes.medium)
                                 .background(ext.backgroundSecondary)
                         ) {
-                            if (routePoints.isEmpty() && !locationPermissionState.hasAnyLocation) {
+                            if (routePoints.isEmpty() && (!locationPermissionState.hasAnyLocation || (hasMapsApiKey && lastKnownLatLng == null))) {
                                 Column(
                                     modifier = Modifier
                                         .fillMaxSize()
@@ -202,13 +221,21 @@ fun ActivityMapScreen(
                                     )
                                     Spacer(modifier = Modifier.height(10.dp))
                                     Text(
-                                        text = "No Recorded GPS Route Yet",
+                                        text = if (locationPermissionState.hasAnyLocation) {
+                                            "Waiting for GPS Location"
+                                        } else {
+                                            "No Recorded GPS Route Yet"
+                                        },
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
-                                        text = "Grant location permission to view your current position on the map, or record an outdoor walk, run, or cycle in Activity.",
+                                        text = if (locationPermissionState.hasAnyLocation) {
+                                            "Acquiring your current location fix, or record an outdoor walk, run, or cycle in Activity."
+                                        } else {
+                                            "Grant location permission to view your current position on the map, or record an outdoor walk, run, or cycle in Activity."
+                                        },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
@@ -218,10 +245,11 @@ fun ActivityMapScreen(
                                 val targetLatLng = if (focusPoint != null) {
                                     LatLng(focusPoint.lat, focusPoint.lng)
                                 } else {
-                                    LatLng(0.0, 0.0)
+                                    lastKnownLatLng!!
                                 }
-                                val cameraState = rememberCameraPositionState(key = selectedSession?.id ?: "user_loc") {
-                                    position = CameraPosition.fromLatLngZoom(targetLatLng, if (focusPoint != null) 15f else 2f)
+                                val zoomLevel = if (focusPoint != null) 15f else 14f
+                                val cameraState = rememberCameraPositionState(key = selectedSession?.id ?: "user_loc_${targetLatLng.latitude}") {
+                                    position = CameraPosition.fromLatLngZoom(targetLatLng, zoomLevel)
                                 }
                                 GoogleMap(
                                     modifier = Modifier.fillMaxSize(),
@@ -253,7 +281,7 @@ fun ActivityMapScreen(
                                             Marker(
                                                 state = MarkerState(position = finish),
                                                 title = "Finish",
-                                                snippet = selectedSession?.let { String.format(Locale.US, "%.2f km", it.distanceKm) }
+                                                snippet = selectedSession?.let { UnitFormatter.formatDistance(it.distanceKm, unitSystem) }
                                             )
                                         }
                                     }
@@ -327,9 +355,9 @@ fun ActivityMapScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                MapMetricColumn("Distance", String.format(Locale.US, "%.2f km", selectedSession.distanceKm))
+                                MapMetricColumn("Distance", UnitFormatter.formatDistance(selectedSession.distanceKm, unitSystem))
                                 MapMetricColumn("Duration", FitnessCalculator.formatDuration(selectedSession.durationSeconds))
-                                MapMetricColumn("Pace", FitnessCalculator.formatPace(selectedSession.avgPaceMinPerKm))
+                                MapMetricColumn("Pace", UnitFormatter.formatPace(selectedSession.avgPaceMinPerKm, unitSystem))
                                 MapMetricColumn("Calories", "${selectedSession.caloriesBurned.toInt()} kcal")
                             }
                         }
@@ -365,12 +393,12 @@ fun ActivityMapScreen(
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
-                                        text = "${session.activityType.replaceFirstChar { it.uppercase() }} • ${String.format(Locale.US, "%.2f", session.distanceKm)} km",
+                                        text = "${session.activityType.replaceFirstChar { it.uppercase() }} • ${UnitFormatter.formatDistance(session.distanceKm, unitSystem)}",
                                         style = MaterialTheme.typography.titleMedium,
                                         fontWeight = FontWeight.Bold
                                     )
                                     Text(
-                                        text = "${FitnessCalculator.formatDuration(session.durationSeconds)} • ${FitnessCalculator.formatPace(session.avgPaceMinPerKm)} • ${session.routePoints.size} pts",
+                                        text = "${FitnessCalculator.formatDuration(session.durationSeconds)} • ${UnitFormatter.formatPace(session.avgPaceMinPerKm, unitSystem)} • ${session.routePoints.size} pts",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )

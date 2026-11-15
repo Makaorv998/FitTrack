@@ -1,5 +1,8 @@
 package com.example.domain
 
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -24,6 +27,37 @@ data class MacroBreakdown(
 object FitnessCalculator {
 
     fun isMinor(ageYears: Int): Boolean = ageYears < 18
+
+    fun computeAgeFromDobIso(dobIso: String, nowMs: Long = System.currentTimeMillis()): Int? {
+        val trimmed = dobIso.trim()
+        if (!Regex("""^\d{4}-\d{2}-\d{2}$""").matches(trimmed)) return null
+        return runCatching {
+            val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }
+            val dobDate = sdf.parse(trimmed) ?: return null
+            if (dobDate.time > nowMs) return null
+            val dobCal = Calendar.getInstance().apply { time = dobDate }
+            val nowCal = Calendar.getInstance().apply { timeInMillis = nowMs }
+            var age = nowCal.get(Calendar.YEAR) - dobCal.get(Calendar.YEAR)
+            val currentDay = nowCal.get(Calendar.DAY_OF_YEAR)
+            val dobDay = dobCal.get(Calendar.DAY_OF_YEAR)
+            if (nowCal.get(Calendar.MONTH) < dobCal.get(Calendar.MONTH) ||
+                (nowCal.get(Calendar.MONTH) == dobCal.get(Calendar.MONTH) &&
+                    nowCal.get(Calendar.DAY_OF_MONTH) < dobCal.get(Calendar.DAY_OF_MONTH))
+            ) {
+                age--
+            }
+            val _unused = currentDay - dobDay
+            age.takeIf { it in 1..125 }
+        }.getOrNull()
+    }
+
+    fun resolveAgeYears(ageYears: Long, dobIso: String, nowMs: Long = System.currentTimeMillis()): Int {
+        return computeAgeFromDobIso(dobIso, nowMs) ?: ageYears.toInt().coerceIn(1, 125)
+    }
+
+    fun isMinorFromProfile(ageYears: Long, dobIso: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+        return isMinor(resolveAgeYears(ageYears, dobIso, nowMs))
+    }
 
     fun calculateBmi(weightKg: Double, heightCm: Double): CalculationResult {
         val heightM = (heightCm / 100.0).coerceAtLeast(0.5)
@@ -175,6 +209,10 @@ object FitnessCalculator {
 
     fun calculateMetCalories(met: Double, weightKg: Double, durationMinutes: Double): Double {
         return ((met * 3.5 * weightKg) / 200.0) * durationMinutes.coerceAtLeast(0.0)
+    }
+
+    fun calculateStepCalories(steps: Long, weightKg: Double): Double {
+        return (steps.coerceAtLeast(0L) * 0.04) * (weightKg.coerceAtLeast(30.0) / 70.0)
     }
 
     fun calculateWalkingDistanceKm(steps: Long, heightCm: Double): Double {

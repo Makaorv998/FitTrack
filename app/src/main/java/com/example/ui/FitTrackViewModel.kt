@@ -5,6 +5,8 @@ import android.graphics.Bitmap
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.core.DefaultDispatcherProvider
+import com.example.core.DispatcherProvider
 import com.example.data.ai.AiMealPlanResult
 import com.example.data.ai.FitTrackAiService
 import com.example.data.ai.FoodScanResult
@@ -16,6 +18,7 @@ import com.example.data.model.CompletedSetRecord
 import com.example.data.model.ExerciseDefinition
 import com.example.data.model.ExerciseSessionRecord
 import com.example.data.model.FoodItem
+import com.example.data.model.GoalHistoryEntry
 import com.example.data.model.GpsActivity
 import com.example.data.model.MealLog
 import com.example.data.model.PersonalRecord
@@ -31,9 +34,12 @@ import com.example.data.model.WorkoutProgram
 import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.domain.WorkoutAnalyticsEngine
+import com.example.platform.ConnectivityMonitor
 import com.example.platform.GpsTrackerStore
 import com.example.platform.LocationTrackingService
+import com.example.platform.NotificationPreferences
 import com.example.platform.NutritionPreferences
 import com.example.platform.PersistedActiveWorkout
 import com.example.platform.PlannedMealEntry
@@ -61,6 +67,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -103,6 +110,8 @@ class FitTrackViewModel(
     private val stepManager: StepCounterManager,
     private val restSessionStore: RestTimerAndSessionStore,
     private val userPreferencesStore: UserPreferencesStore,
+    private val connectivityMonitor: ConnectivityMonitor? = null,
+    private val dispatchers: DispatcherProvider = DefaultDispatcherProvider,
     private val currentUserId: String,
     private val userEmail: String,
     private val userDisplayName: String,
@@ -188,24 +197,61 @@ class FitTrackViewModel(
     val progressPhotos: StateFlow<List<ProgressPhotoNote>> = repository.observeProgressPhotos(currentUserId)
         .toSafeStateFlow(emptyList(), "progress_photos")
 
+    val isOnline: StateFlow<Boolean> = connectivityMonitor?.isOnline
+        ?: MutableStateFlow(true).asStateFlow()
+
     val stepSensorState: StateFlow<StepSensorState> = stepManager.state
     val gpsTrackerState = GpsTrackerStore.state
 
-    val trainingPreferences: StateFlow<TrainingPreferences> = userPreferencesStore
-        .observeTrainingPreferences(currentUserId)
-        .toSafeStateFlow(TrainingPreferences(), "training_preferences")
+    val goalHistory: StateFlow<List<GoalHistoryEntry>> = repository.observeGoalHistory(currentUserId)
+        .toSafeStateFlow(emptyList(), "goal_history")
 
-    val nutritionPreferences: StateFlow<NutritionPreferences> = userPreferencesStore
-        .observeNutritionPreferences(currentUserId)
-        .toSafeStateFlow(NutritionPreferences(), "nutrition_preferences")
+    val trainingPreferences: StateFlow<TrainingPreferences> = combine(
+        userPreferencesStore.observeTrainingPreferences(currentUserId),
+        repository.observeSyncPreference(currentUserId, "training").catch { emit(null) }
+    ) { local, remoteJson ->
+        remoteJson?.let { userPreferencesStore.decodeTraining(it) } ?: local
+    }.toSafeStateFlow(TrainingPreferences(), "training_preferences")
 
-    val savedRecipes: StateFlow<List<SavedRecipe>> = userPreferencesStore
-        .observeRecipes(currentUserId)
-        .toSafeStateFlow(emptyList(), "saved_recipes")
+    val nutritionPreferences: StateFlow<NutritionPreferences> = combine(
+        userPreferencesStore.observeNutritionPreferences(currentUserId),
+        repository.observeSyncPreference(currentUserId, "nutrition").catch { emit(null) }
+    ) { local, remoteJson ->
+        remoteJson?.let { userPreferencesStore.decodeNutrition(it) } ?: local
+    }.toSafeStateFlow(NutritionPreferences(), "nutrition_preferences")
 
-    val plannedMeals: StateFlow<List<PlannedMealEntry>> = userPreferencesStore
-        .observePlannedMeals(currentUserId)
-        .toSafeStateFlow(emptyList(), "planned_meals")
+    val notificationPreferences: StateFlow<NotificationPreferences> = combine(
+        userPreferencesStore.observeNotificationPreferences(currentUserId),
+        repository.observeSyncPreference(currentUserId, "notifications").catch { emit(null) }
+    ) { local, remoteJson ->
+        remoteJson?.let { userPreferencesStore.decodeNotifications(it) } ?: local
+    }.toSafeStateFlow(NotificationPreferences(), "notification_preferences")
+
+    val savedRecipes: StateFlow<List<SavedRecipe>> = combine(
+        userPreferencesStore.observeRecipes(currentUserId),
+        repository.observeRecipes(currentUserId)
+            .onEach { remote ->
+                if (remote.isNotEmpty()) {
+                    userPreferencesStore.replaceRecipes(currentUserId, remote)
+                }
+            }
+            .catch { emit(emptyList()) }
+    ) { local, remote ->
+        if (remote.isNotEmpty()) remote else local
+    }.toSafeStateFlow(emptyList(), "saved_recipes")
+
+    val plannedMeals: StateFlow<List<PlannedMealEntry>> = combine(
+        userPreferencesStore.observePlannedMeals(currentUserId),
+        repository.observePlannedMeals(currentUserId)
+            .onEach { remote ->
+                if (remote.isNotEmpty()) {
+                    userPreferencesStore.replacePlannedMeals(currentUserId, remote)
+                }
+            }
+            .catch { emit(emptyList()) }
+    ) { local, remote ->
+        if (remote.isNotEmpty()) remote else local
+    }.toSafeStateFlow(emptyList(), "planned_meals")
 
     val recentFoods: StateFlow<List<RecentFoodEntry>> = userPreferencesStore
         .observeRecentFoods(currentUserId)
@@ -355,17 +401,24 @@ class FitTrackViewModel(
         activityLevel: String,
         goal: String,
         sensorConsent: Boolean,
-        locationConsent: Boolean
+        locationConsent: Boolean,
+        dobIso: String = ""
     ) {
         viewModelScope.launch {
             try {
+                val effectiveAge = FitnessCalculator.resolveAgeYears(ageYears, dobIso).coerceIn(13, 120)
+                val safeGoal = if (FitnessCalculator.isMinor(effectiveAge) && goal == "weight_loss") {
+                    "weight_maintenance"
+                } else {
+                    goal
+                }
                 val (calTarget, _) = FitnessCalculator.calculateDailyCalorieTarget(
                     weightKg = weightKg,
                     heightCm = heightCm,
-                    ageYears = ageYears.toInt(),
+                    ageYears = effectiveAge,
                     sex = sex,
                     activityLevel = activityLevel,
-                    goal = goal
+                    goal = safeGoal
                 )
                 val waterTarget = FitnessCalculator.calculateWaterTargetMl(weightKg).toLong()
                 val existing = userProfile.value ?: UserProfile(userId = currentUserId)
@@ -373,13 +426,14 @@ class FitTrackViewModel(
                     displayName = displayName.ifBlank { existing.displayName },
                     email = userEmail,
                     photoUrl = userPhotoUrl,
-                    ageYears = ageYears.coerceIn(13L, 120L),
+                    ageYears = effectiveAge.toLong(),
+                    dateOfBirthIso = dobIso.trim(),
                     sex = sex,
                     heightCm = heightCm,
                     weightKg = weightKg,
                     targetWeightKg = targetWeightKg,
                     activityLevel = activityLevel,
-                    goal = goal,
+                    goal = safeGoal,
                     dailyCalorieTarget = calTarget.toLong(),
                     dailyWaterTargetMl = waterTarget,
                     onboardingCompleted = true,
@@ -388,6 +442,20 @@ class FitTrackViewModel(
                 )
                 repository.updateProfile(updated)
                 repository.addWeightRecord(todayDateKey(), weightKg, "Initial weight")
+                repository.saveGoalHistoryEntry(
+                    GoalHistoryEntry(
+                        userId = currentUserId,
+                        goalType = safeGoal,
+                        title = "Primary Goal: ${safeGoal.replace("_", " ").replaceFirstChar { it.uppercase() }}",
+                        status = "active",
+                        targetValue = targetWeightKg,
+                        currentValue = weightKg,
+                        unit = "kg",
+                        targetDateKey = "",
+                        completedDateKey = "",
+                        notes = "Initial onboarding target"
+                    )
+                )
                 FitnessCatalog.defaultChallenges(currentUserId).forEach { ch ->
                     repository.upsertChallenge(ch)
                 }
@@ -411,6 +479,14 @@ class FitTrackViewModel(
         val current = userProfile.value ?: return
         viewModelScope.launch {
             runCatching { repository.updateProfile(current.copy(unitSystem = units)) }
+                .onFailure { _bannerError.value = it.localizedMessage }
+        }
+    }
+
+    fun updateReducedMotion(enabled: Boolean) {
+        val current = userProfile.value ?: return
+        viewModelScope.launch {
+            runCatching { repository.updateProfile(current.copy(reducedMotionEnabled = enabled)) }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
@@ -466,23 +542,26 @@ class FitTrackViewModel(
         stepGoal: Long,
         waterGoalMl: Long,
         calorieGoal: Long,
-        goal: String
+        goal: String,
+        dobIso: String? = null
     ) {
         val current = userProfile.value ?: return
         viewModelScope.launch {
             try {
-                val safeAge = ageYears.coerceIn(13L, 120L)
+                val effectiveDob = (dobIso ?: current.dateOfBirthIso).trim()
+                val effectiveAge = FitnessCalculator.resolveAgeYears(ageYears, effectiveDob).coerceIn(13, 120)
+                val safeAge = effectiveAge.toLong()
                 val safeHeight = heightCm.coerceIn(80.0, 260.0)
                 val safeWeight = weightKg.coerceIn(25.0, 400.0)
                 val safeTargetWeight = targetWeightKg.coerceIn(25.0, 400.0)
-                val safeGoal = if (FitnessCalculator.isMinor(safeAge.toInt()) && goal == "weight_loss") {
+                val safeGoal = if (FitnessCalculator.isMinor(effectiveAge) && goal == "weight_loss") {
                     "weight_maintenance"
                 } else {
                     goal
                 }
-                val finalCalories = if (FitnessCalculator.isMinor(safeAge.toInt())) {
+                val finalCalories = if (FitnessCalculator.isMinor(effectiveAge)) {
                     val (safeTarget, _) = FitnessCalculator.calculateDailyCalorieTarget(
-                        safeWeight, safeHeight, safeAge.toInt(), sex, activityLevel, safeGoal
+                        safeWeight, safeHeight, effectiveAge, sex, activityLevel, safeGoal
                     )
                     safeTarget.toLong()
                 } else {
@@ -492,6 +571,7 @@ class FitTrackViewModel(
                     current.copy(
                         displayName = displayName.ifBlank { current.displayName },
                         ageYears = safeAge,
+                        dateOfBirthIso = effectiveDob,
                         sex = sex,
                         heightCm = safeHeight,
                         weightKg = safeWeight,
@@ -512,18 +592,64 @@ class FitTrackViewModel(
         }
     }
 
+    fun saveGoalHistoryEntry(entry: GoalHistoryEntry) {
+        val currentAge = (userProfile.value?.ageYears ?: 28L).toInt()
+        val safeType = if (FitnessCalculator.isMinor(currentAge) && entry.goalType == "weight_loss") {
+            "weight_maintenance"
+        } else {
+            entry.goalType
+        }
+        viewModelScope.launch {
+            runCatching {
+                repository.saveGoalHistoryEntry(entry.copy(userId = currentUserId, goalType = safeType))
+            }.onSuccess { _statusMessage.value = "Goal saved" }
+                .onFailure { _bannerError.value = it.localizedMessage }
+        }
+    }
+
+    fun updateGoalStatus(entry: GoalHistoryEntry, newStatus: String) {
+        val completedDate = if (newStatus == "completed" && entry.completedDateKey.isBlank()) {
+            todayDateKey()
+        } else {
+            entry.completedDateKey
+        }
+        saveGoalHistoryEntry(entry.copy(status = newStatus, completedDateKey = completedDate))
+    }
+
+    fun deleteGoalHistoryEntry(goalId: String) {
+        viewModelScope.launch {
+            runCatching { repository.deleteGoalHistoryEntry(goalId) }
+                .onSuccess { _statusMessage.value = "Goal removed" }
+                .onFailure { _bannerError.value = it.localizedMessage }
+        }
+    }
+
     fun updateTrainingPreferences(prefs: TrainingPreferences) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.saveTrainingPreferences(currentUserId, prefs) }
-                .onSuccess { _statusMessage.value = "Training preferences updated" }
+            runCatching {
+                userPreferencesStore.saveTrainingPreferences(currentUserId, prefs)
+                runCatching { repository.saveSyncPreference("training", userPreferencesStore.encodeTraining(prefs)) }
+            }.onSuccess { _statusMessage.value = "Training preferences updated" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
 
     fun updateNutritionPreferences(prefs: NutritionPreferences) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.saveNutritionPreferences(currentUserId, prefs) }
-                .onSuccess { _statusMessage.value = "Nutrition preferences updated" }
+            runCatching {
+                userPreferencesStore.saveNutritionPreferences(currentUserId, prefs)
+                runCatching { repository.saveSyncPreference("nutrition", userPreferencesStore.encodeNutrition(prefs)) }
+            }.onSuccess { _statusMessage.value = "Nutrition preferences updated" }
+                .onFailure { _bannerError.value = it.localizedMessage }
+        }
+    }
+
+    fun updateNotificationPreferences(prefs: NotificationPreferences) {
+        viewModelScope.launch {
+            runCatching {
+                userPreferencesStore.saveNotificationPreferences(currentUserId, prefs)
+                runCatching { repository.saveSyncPreference("notifications", userPreferencesStore.encodeNotifications(prefs)) }
+            }.onSuccess { _statusMessage.value = "Reminder preferences updated" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
@@ -540,7 +666,7 @@ class FitTrackViewModel(
         val height = profile?.heightCm ?: 172.0
         val total = sensor.totalSteps
         val distKm = FitnessCalculator.calculateWalkingDistanceKm(total, height)
-        val cals = (total * 0.04) * (weight / 70.0)
+        val cals = FitnessCalculator.calculateStepCalories(total, weight)
         viewModelScope.launch {
             runCatching {
                 repository.upsertStepRecord(
@@ -604,7 +730,7 @@ class FitTrackViewModel(
                         endedAtMs = now
                     )
                 )
-                GpsTrackerStore.reset()
+                GpsTrackerStore.reset(context)
                 _statusMessage.value = "GPS activity saved"
             } catch (e: CancellationException) {
                 throw e
@@ -638,6 +764,7 @@ class FitTrackViewModel(
                         mealType = mealType,
                         foodName = food.name,
                         grams = grams,
+                        measurementUnit = food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g",
                         calories = food.caloriesPer100g * factor,
                         proteinG = food.proteinPer100g * factor,
                         carbsG = food.carbsPer100g * factor,
@@ -658,7 +785,8 @@ class FitTrackViewModel(
                         fatPer100g = food.fatPer100g,
                         fiberPer100g = food.fiberPer100g,
                         sugarPer100g = food.sugarPer100g,
-                        lastGrams = grams
+                        lastGrams = grams,
+                        measurementUnit = food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                     )
                 )
                 _statusMessage.value = "Added ${food.name} to $mealType"
@@ -680,16 +808,21 @@ class FitTrackViewModel(
 
     fun saveRecipe(recipe: SavedRecipe) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.saveRecipe(currentUserId, recipe) }
-                .onSuccess { _statusMessage.value = "Saved recipe '${recipe.name}'" }
+            runCatching {
+                val remoteId = runCatching { repository.saveRecipe(recipe) }.getOrNull()
+                val localRecipe = if (!remoteId.isNullOrBlank()) recipe.copy(id = remoteId) else recipe
+                userPreferencesStore.saveRecipe(currentUserId, localRecipe)
+            }.onSuccess { _statusMessage.value = "Saved recipe '${recipe.name}'" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
 
     fun deleteRecipe(recipeId: String) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.deleteRecipe(currentUserId, recipeId) }
-                .onSuccess { _statusMessage.value = "Recipe removed" }
+            runCatching {
+                userPreferencesStore.deleteRecipe(currentUserId, recipeId)
+                runCatching { repository.deleteRecipe(recipeId) }
+            }.onSuccess { _statusMessage.value = "Recipe removed" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
@@ -703,6 +836,7 @@ class FitTrackViewModel(
                 mealType = mealType,
                 foodName = "${recipe.name} (${String.format(java.util.Locale.US, "%.1f", factor)} srv)",
                 grams = recipe.gramsPerServing * factor,
+                measurementUnit = recipe.measurementUnit,
                 calories = recipe.caloriesPerServing * factor,
                 proteinG = recipe.proteinPerServingG * factor,
                 carbsG = recipe.carbsPerServingG * factor,
@@ -717,16 +851,21 @@ class FitTrackViewModel(
 
     fun savePlannedMeal(entry: PlannedMealEntry) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.savePlannedMeal(currentUserId, entry) }
-                .onSuccess { _statusMessage.value = "Added '${entry.title}' to ${entry.dayOfWeek} plan" }
+            runCatching {
+                val remoteId = runCatching { repository.savePlannedMeal(entry) }.getOrNull()
+                val savedEntry = if (!remoteId.isNullOrBlank()) entry.copy(id = remoteId) else entry
+                userPreferencesStore.savePlannedMeal(currentUserId, savedEntry)
+            }.onSuccess { _statusMessage.value = "Added '${entry.title}' to ${entry.dayOfWeek} plan" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
 
     fun deletePlannedMeal(entryId: String) {
         viewModelScope.launch {
-            runCatching { userPreferencesStore.deletePlannedMeal(currentUserId, entryId) }
-                .onFailure { _bannerError.value = it.localizedMessage }
+            runCatching {
+                userPreferencesStore.deletePlannedMeal(currentUserId, entryId)
+                runCatching { repository.deletePlannedMeal(entryId) }
+            }.onFailure { _bannerError.value = it.localizedMessage }
         }
     }
 
@@ -782,9 +921,10 @@ class FitTrackViewModel(
     }
 
     fun addWater(amountMl: Long) {
+        val unitSystem = userProfile.value?.unitSystem ?: "metric"
         viewModelScope.launch {
             runCatching { repository.addWaterLog(todayDateKey(), amountMl) }
-                .onSuccess { _statusMessage.value = "+${amountMl} ml logged" }
+                .onSuccess { _statusMessage.value = "+${UnitFormatter.formatWater(amountMl, unitSystem)} logged" }
                 .onFailure { _bannerError.value = it.localizedMessage }
         }
     }
@@ -1573,12 +1713,16 @@ class FitTrackViewModel(
 
     fun generateAiMealPlan(preferences: String, allergies: String) {
         val profile = userProfile.value
-        val cals = (profile?.dailyCalorieTarget ?: 2100L).toInt()
+        val effectiveAge = FitnessCalculator.resolveAgeYears(profile?.ageYears ?: 25L, profile?.dateOfBirthIso.orEmpty())
+        val isMinor = FitnessCalculator.isMinor(effectiveAge)
+        val rawCals = (profile?.dailyCalorieTarget ?: 2100L).toInt()
+        val cals = FitTrackAiService.safeMealPlanCalorieFloor(rawCals, isMinor)
+        val safeGoal = if (isMinor && profile?.goal == "weight_loss") "weight_maintenance" else (profile?.goal ?: "general_fitness")
         val macros = FitnessCalculator.calculateMacros(
             calorieTarget = cals,
             weightKg = profile?.weightKg ?: 70.0,
-            goal = profile?.goal ?: "general_fitness",
-            ageYears = (profile?.ageYears ?: 25L).toInt()
+            goal = safeGoal,
+            ageYears = effectiveAge
         )
         viewModelScope.launch {
             _aiMealPlanState.value = AsyncState.Loading
@@ -1589,7 +1733,8 @@ class FitTrackViewModel(
                     carbsG = macros.carbsGrams,
                     fatG = macros.fatGrams,
                     preferences = preferences,
-                    allergies = allergies
+                    allergies = allergies,
+                    isMinor = isMinor
                 )
                 _aiMealPlanState.value = AsyncState.Success(res)
             } catch (e: CancellationException) {
@@ -1600,6 +1745,16 @@ class FitTrackViewModel(
         }
     }
 
+    fun clearAiChatHistory() {
+        viewModelScope.launch {
+            runCatching {
+                repository.clearAiMessages()
+                _coachState.value = AsyncState.Idle
+            }.onSuccess { _statusMessage.value = "AI Coach chat history cleared" }
+                .onFailure { _bannerError.value = it.localizedMessage ?: "Failed to clear chat history" }
+        }
+    }
+
     suspend fun exportUserDataJson(): String {
         return repository.exportAllUserDataJson()
     }
@@ -1607,8 +1762,13 @@ class FitTrackViewModel(
     fun deleteAccountData(onComplete: () -> Unit) {
         viewModelScope.launch {
             try {
+                workoutTimerJob?.cancel()
+                _activeWorkout.value = null
                 repository.deleteAllUserData()
                 userPreferencesStore.clearAllForUser(currentUserId)
+                restSessionStore.clearAllForUser(currentUserId)
+                stepManager.resetForAccountDeletion()
+                GpsTrackerStore.reset()
                 onComplete()
             } catch (e: CancellationException) {
                 throw e

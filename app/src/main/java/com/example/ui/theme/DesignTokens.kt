@@ -46,8 +46,9 @@ object FitTrackMotion {
 
 @Composable
 fun rememberReducedMotion(): Boolean {
+    val userOverride = LocalReducedMotionOverride.current
     val context = LocalContext.current
-    return remember(context) {
+    val systemReduced = remember(context) {
         try {
             Settings.Global.getFloat(
                 context.contentResolver,
@@ -58,4 +59,5 @@ fun rememberReducedMotion(): Boolean {
             false
         }
     }
+    return userOverride || systemReduced
 }

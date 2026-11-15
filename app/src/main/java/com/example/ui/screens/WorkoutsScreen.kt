@@ -118,9 +118,12 @@ fun WorkoutsScreen(
     onRequestAiWorkoutAnalysis: () -> Unit,
     onOpenAiWorkoutPlanner: () -> Unit
 ) {
+    val unitSystem = profile?.unitSystem ?: "metric"
+
     if (activeWorkout != null) {
         ActiveWorkoutScreen(
             active = activeWorkout,
+            unitSystem = unitSystem,
             sessions = sessions,
             personalRecords = personalRecords,
             aiSubstitutionsState = aiSubstitutionsState,
@@ -162,7 +165,7 @@ fun WorkoutsScreen(
             Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp)) {
                 ScreenHeader(
                     title = "Workout",
-                    subtitle = "${dashboardMetrics.totalWorkouts} sessions • ${dashboardMetrics.totalWorkingVolumeKg.toInt()} kg working vol",
+                    subtitle = "${dashboardMetrics.totalWorkouts} sessions • ${WorkoutAnalyticsEngine.formatVolume(dashboardMetrics.totalWorkingVolumeKg, unitSystem)} working vol",
                     trailing = {
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(
@@ -245,6 +248,7 @@ fun WorkoutsScreen(
                     allPlans = allPlans,
                     schedules = schedules,
                     sessions = sessions,
+                    unitSystem = unitSystem,
                     onUpsertSchedule = onUpsertSchedule,
                     onDeleteSchedule = onDeleteSchedule,
                     onStartWorkout = onStartWorkout
@@ -252,6 +256,7 @@ fun WorkoutsScreen(
 
                 3 -> ExerciseLibraryView(
                     sessions = sessions,
+                    unitSystem = unitSystem,
                     aiSubstitutionsState = aiSubstitutionsState,
                     onRequestAiSubstitutions = onRequestAiSubstitutions,
                     onResetAiSubstitutions = onResetAiSubstitutions
@@ -261,6 +266,7 @@ fun WorkoutsScreen(
                     metrics = dashboardMetrics,
                     sessions = sessions,
                     personalRecords = personalRecords,
+                    unitSystem = unitSystem,
                     aiWorkoutAnalysisState = aiWorkoutAnalysisState,
                     onRequestAiAnalysis = onRequestAiWorkoutAnalysis
                 )
@@ -271,6 +277,7 @@ fun WorkoutsScreen(
     if (showQuickBuilder) {
         WorkoutBuilderSheet(
             initialPlan = null,
+            unitSystem = unitSystem,
             onDismiss = { showQuickBuilder = false },
             onSave = { plan ->
                 onSaveWorkoutPlan(plan)

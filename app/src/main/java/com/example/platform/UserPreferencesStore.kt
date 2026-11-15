@@ -34,9 +34,27 @@ data class NutritionPreferences(
 )
 
 @Serializable
+data class NotificationPreferences(
+    val workoutReminderEnabled: Boolean = false,
+    val workoutReminderHour: Int = 18,
+    val workoutReminderMinute: Int = 0,
+    val hydrationReminderEnabled: Boolean = false,
+    val hydrationIntervalMinutes: Int = 120,
+    val stepGoalReminderEnabled: Boolean = false,
+    val stepReminderHour: Int = 19,
+    val quietHoursEnabled: Boolean = true,
+    val quietHoursStartHour: Int = 22,
+    val quietHoursEndHour: Int = 7,
+    val lastWorkoutNotifiedDateKey: String = "",
+    val lastHydrationNotifiedMs: Long = 0L,
+    val lastStepNotifiedDateKey: String = ""
+)
+
+@Serializable
 data class RecipeIngredient(
     val foodName: String = "",
     val grams: Double = 100.0,
+    val measurementUnit: String = "g",
     val calories: Double = 0.0,
     val proteinG: Double = 0.0,
     val carbsG: Double = 0.0,
@@ -51,6 +69,7 @@ data class SavedRecipe(
     val name: String = "",
     val servings: Int = 1,
     val notes: String = "",
+    val measurementUnit: String = "g",
     val ingredients: List<RecipeIngredient> = emptyList(),
     val createdAtMs: Long = System.currentTimeMillis()
 ) {
@@ -78,6 +97,7 @@ data class PlannedMealEntry(
     val mealType: String = "breakfast",
     val title: String = "",
     val grams: Double = 250.0,
+    val measurementUnit: String = "g",
     val calories: Double = 0.0,
     val proteinG: Double = 0.0,
     val carbsG: Double = 0.0,
@@ -95,6 +115,7 @@ data class RecentFoodEntry(
     val fiberPer100g: Double = 0.0,
     val sugarPer100g: Double = 0.0,
     val lastGrams: Double = 100.0,
+    val measurementUnit: String = "g",
     val lastUsedMs: Long = System.currentTimeMillis()
 ) {
     fun toFoodItem() = FoodItem(
@@ -102,7 +123,8 @@ data class RecentFoodEntry(
         name = foodName,
         brand = brand,
         servingSizeGrams = lastGrams,
-        servingLabel = "${lastGrams.toInt()}g",
+        servingLabel = "${lastGrams.toInt()}$measurementUnit",
+        measurementUnit = measurementUnit,
         caloriesPer100g = caloriesPer100g,
         proteinPer100g = proteinPer100g,
         carbsPer100g = carbsPer100g,
@@ -121,6 +143,7 @@ class UserPreferencesStore(private val context: Context) {
 
     private fun trainingKey(uid: String) = stringPreferencesKey("training_prefs_$uid")
     private fun nutritionKey(uid: String) = stringPreferencesKey("nutrition_prefs_$uid")
+    private fun notificationsKey(uid: String) = stringPreferencesKey("notification_prefs_$uid")
     private fun recipesKey(uid: String) = stringPreferencesKey("saved_recipes_$uid")
     private fun mealPlanKey(uid: String) = stringPreferencesKey("planned_meals_$uid")
     private fun recentFoodsKey(uid: String) = stringPreferencesKey("recent_foods_$uid")
@@ -228,13 +251,46 @@ class UserPreferencesStore(private val context: Context) {
         }
     }
 
+    fun observeNotificationPreferences(uid: String): Flow<NotificationPreferences> =
+        context.preferencesDataStore.data.map { prefs ->
+            prefs[notificationsKey(uid)]?.let { raw ->
+                runCatching { json.decodeFromString<NotificationPreferences>(raw) }.getOrNull()
+            } ?: NotificationPreferences()
+        }
+
+    suspend fun saveNotificationPreferences(uid: String, value: NotificationPreferences) {
+        context.preferencesDataStore.edit { prefs ->
+            prefs[notificationsKey(uid)] = json.encodeToString(value)
+        }
+    }
+
+    suspend fun replaceRecipes(uid: String, recipes: List<SavedRecipe>) {
+        context.preferencesDataStore.edit { prefs ->
+            prefs[recipesKey(uid)] = json.encodeToString(recipes)
+        }
+    }
+
+    suspend fun replacePlannedMeals(uid: String, entries: List<PlannedMealEntry>) {
+        context.preferencesDataStore.edit { prefs ->
+            prefs[mealPlanKey(uid)] = json.encodeToString(entries)
+        }
+    }
+
     suspend fun clearAllForUser(uid: String) {
         context.preferencesDataStore.edit { prefs ->
             prefs.remove(trainingKey(uid))
             prefs.remove(nutritionKey(uid))
+            prefs.remove(notificationsKey(uid))
             prefs.remove(recipesKey(uid))
             prefs.remove(mealPlanKey(uid))
             prefs.remove(recentFoodsKey(uid))
         }
     }
+
+    fun encodeTraining(value: TrainingPreferences): String = json.encodeToString(value)
+    fun decodeTraining(raw: String): TrainingPreferences? = runCatching { json.decodeFromString<TrainingPreferences>(raw) }.getOrNull()
+    fun encodeNutrition(value: NutritionPreferences): String = json.encodeToString(value)
+    fun decodeNutrition(raw: String): NutritionPreferences? = runCatching { json.decodeFromString<NutritionPreferences>(raw) }.getOrNull()
+    fun encodeNotifications(value: NotificationPreferences): String = json.encodeToString(value)
+    fun decodeNotifications(raw: String): NotificationPreferences? = runCatching { json.decodeFromString<NotificationPreferences>(raw) }.getOrNull()
 }

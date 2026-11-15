@@ -53,6 +53,7 @@ import androidx.compose.ui.unit.dp
 import com.example.data.model.WorkoutPlan
 import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
+import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.todayDateKey
 import com.example.ui.components.FitTrackCard
 import com.example.ui.components.GlassCard
@@ -72,6 +73,7 @@ fun WorkoutCalendarView(
     allPlans: List<WorkoutPlan>,
     schedules: List<WorkoutScheduleItem>,
     sessions: List<WorkoutSessionLog>,
+    unitSystem: String = "metric",
     onUpsertSchedule: (WorkoutScheduleItem) -> Unit,
     onDeleteSchedule: (String) -> Unit,
     onStartWorkout: (WorkoutPlan) -> Unit
@@ -323,8 +325,9 @@ fun WorkoutCalendarView(
                 if (selectedSessions.isNotEmpty()) {
                     Spacer(modifier = Modifier.height(8.dp))
                     selectedSessions.forEach { sess ->
+                        val workVol = if (sess.workingVolumeKg > 0.0) sess.workingVolumeKg else sess.totalVolumeKg
                         Text(
-                            text = "✓ Logged: ${sess.workoutName} (${sess.setsCompleted} sets, ${sess.workingVolumeKg.toInt()} kg)",
+                            text = "✓ Logged: ${sess.workoutName} (${sess.setsCompleted} sets, ${WorkoutAnalyticsEngine.formatVolume(workVol, unitSystem)})",
                             style = MaterialTheme.typography.bodyMedium,
                             color = ext.success
                         )

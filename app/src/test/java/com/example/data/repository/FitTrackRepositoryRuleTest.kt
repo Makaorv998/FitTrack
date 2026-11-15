@@ -218,6 +218,101 @@ class FitTrackRepositoryRuleTest : FirestoreEmulatorTestBase() {
         assertTrue(noteId.isNotBlank())
     }
 
+    @Test
+    fun owner_canManageGoalHistoryRecipesPlannedMealsPreferencesAndClearAiMessages() = runBlocking {
+        val uid = signInTestUser(ALICE_EMAIL)
+        val repo = FitTrackRepository(firestore)
+
+        // Recipe & meal_plan MealLog sources + ml unit
+        val recipeMealId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.addMeal(
+                MealLog(
+                    userId = uid,
+                    dateKey = "2026-11-15",
+                    mealType = "snack",
+                    foodName = "Whey Shake",
+                    grams = 300.0,
+                    measurementUnit = "ml",
+                    calories = 240.0,
+                    proteinG = 30.0,
+                    carbsG = 12.0,
+                    fatG = 4.0,
+                    fiberG = 1.0,
+                    sugarG = 3.0,
+                    source = "recipe"
+                )
+            )
+        }
+        assertTrue(recipeMealId.isNotBlank())
+
+        val goalId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.saveGoalHistoryEntry(
+                com.example.data.model.GoalHistoryEntry(
+                    userId = uid,
+                    goalType = "strength",
+                    title = "100 kg Squat",
+                    status = "active",
+                    targetValue = 100.0,
+                    currentValue = 85.0,
+                    unit = "kg",
+                    targetDateKey = "2026-12-20",
+                    notes = "Add 2.5kg biweekly"
+                )
+            )
+        }
+        assertTrue(goalId.isNotBlank())
+
+        val recipeId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.saveRecipe(
+                com.example.platform.SavedRecipe(
+                    name = "Berry Smoothie",
+                    servings = 2,
+                    notes = "Blend cold",
+                    measurementUnit = "ml",
+                    ingredients = listOf(
+                        com.example.platform.RecipeIngredient(
+                            foodName = "Milk",
+                            grams = 400.0,
+                            measurementUnit = "ml",
+                            calories = 200.0,
+                            proteinG = 14.0,
+                            carbsG = 20.0,
+                            fatG = 6.0
+                        )
+                    )
+                )
+            )
+        }
+        assertTrue(recipeId.isNotBlank())
+
+        val plannedId = withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.savePlannedMeal(
+                com.example.platform.PlannedMealEntry(
+                    dayOfWeek = "Monday",
+                    mealType = "lunch",
+                    title = "Chicken Rice Bowl",
+                    grams = 420.0,
+                    calories = 590.0,
+                    proteinG = 46.0,
+                    carbsG = 64.0,
+                    fatG = 14.0
+                )
+            )
+        }
+        assertTrue(plannedId.isNotBlank())
+
+        withTimeout(DEFAULT_TIMEOUT_MS) {
+            repo.saveSyncPreference("notifications", """{"hydrationReminderEnabled":true}""")
+            repo.addAiMessage("user", "Quick tip?")
+            repo.clearAiMessages()
+        }
+
+        val remainingMessages = withTimeout(FLOW_TIMEOUT_MS) {
+            repo.observeAiMessages(uid).first()
+        }
+        assertEquals(0, remainingMessages.size)
+    }
+
     private companion object {
         const val ALICE_EMAIL = "alice_fittrack@test.com"
         const val BOB_EMAIL = "bob_fittrack@test.com"

@@ -34,7 +34,7 @@ abstract class FirestoreEmulatorTestBase {
     open fun setUpFirebase() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val resId = context.resources.getIdentifier("firestore_database_id", "string", context.packageName)
-        databaseId = if (resId != 0) context.getString(resId) else "ai-studio-android-fittrack-103d873d-fc2f-4ae5-8e7e-2ba44bf1bec0"
+        databaseId = if (resId != 0) context.getString(resId) else "ai-studio-android-fittrack-4e6516d9-603b-40c4-9f48-6ac4872bdd53"
 
         val app = if (FirebaseApp.getApps(context).isEmpty()) {
             val newApp = FirebaseApp.initializeApp(

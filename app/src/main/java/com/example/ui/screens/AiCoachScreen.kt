@@ -25,6 +25,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -58,9 +60,11 @@ import com.example.data.model.AiChatMessage
 import com.example.ui.AsyncState
 import com.example.ui.branding.FitTrackIllustrationType
 import com.example.ui.components.AuroraAmbientBackground
+import com.example.ui.components.ConfirmationModal
 import com.example.ui.components.DisclaimerBanner
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.ErrorBannerCard
+import com.example.ui.components.SecondaryButton
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.LocalFitTrackColors
 
@@ -70,10 +74,14 @@ fun AiCoachScreen(
     messages: List<AiChatMessage>,
     coachState: AsyncState<String>,
     onSendMessage: (String) -> Unit,
+    onClearHistory: () -> Unit = {},
     onBack: () -> Unit
 ) {
     var inputText by remember { mutableStateOf("") }
+    var lastSentPrompt by remember { mutableStateOf("") }
+    var showClearDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+    val isBusy = coachState is AsyncState.Loading || coachState is AsyncState.Streaming
 
     val quickPrompts = listOf(
         "Review my daily nutrition & steps",
@@ -97,6 +105,20 @@ fun AiCoachScreen(
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                    }
+                },
+                actions = {
+                    if (messages.isNotEmpty()) {
+                        IconButton(
+                            onClick = { showClearDialog = true },
+                            enabled = !isBusy,
+                            modifier = Modifier.testTag("clear_ai_chat_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Filled.DeleteSweep,
+                                contentDescription = "Clear chat history"
+                            )
+                        }
                     }
                 }
             )
@@ -164,7 +186,11 @@ fun AiCoachScreen(
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             quickPrompts.forEach { prompt ->
                                 AssistChip(
-                                    onClick = { onSendMessage(prompt) },
+                                    onClick = {
+                                        lastSentPrompt = prompt
+                                        onSendMessage(prompt)
+                                    },
+                                    enabled = !isBusy,
                                     label = { Text(prompt) }
                                 )
                             }
@@ -233,7 +259,19 @@ fun AiCoachScreen(
                         }
                         is AsyncState.Error -> {
                             item {
-                                ErrorBannerCard(message = coachState.message)
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    ErrorBannerCard(message = coachState.message)
+                                    if (lastSentPrompt.isNotBlank()) {
+                                        SecondaryButton(
+                                            text = "Retry Message",
+                                            icon = Icons.Filled.Refresh,
+                                            onClick = { onSendMessage(lastSentPrompt) },
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("retry_ai_coach_button")
+                                        )
+                                    }
+                                }
                             }
                         }
                         else -> Unit
@@ -265,11 +303,12 @@ fun AiCoachScreen(
                             onClick = {
                                 val prompt = inputText.trim()
                                 if (prompt.isNotBlank()) {
+                                    lastSentPrompt = prompt
                                     onSendMessage(prompt)
                                     inputText = ""
                                 }
                             },
-                            enabled = coachState !is AsyncState.Loading && coachState !is AsyncState.Streaming,
+                            enabled = !isBusy,
                             modifier = Modifier
                                 .size(48.dp)
                                 .clip(CircleShape)
@@ -286,5 +325,19 @@ fun AiCoachScreen(
                 }
             }
         }
+    }
+
+    if (showClearDialog) {
+        ConfirmationModal(
+            title = "Clear AI Coach History?",
+            message = "This will permanently remove your saved AI Coach conversation messages.",
+            confirmText = "Clear History",
+            isDestructive = true,
+            onConfirm = {
+                showClearDialog = false
+                onClearHistory()
+            },
+            onDismiss = { showClearDialog = false }
+        )
     }
 }

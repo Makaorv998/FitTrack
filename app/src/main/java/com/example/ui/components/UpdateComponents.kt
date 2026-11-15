@@ -12,13 +12,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.NewReleases
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -99,7 +99,7 @@ fun UpdateAvailabilityBanner(
     val title = when {
         playDownloaded -> "FitTrack update ready to install"
         isCritical && latest != null -> "Critical Update Required (v${latest.versionName})"
-        hasUpdate && latest != null -> "FitTrack v${latest.versionName} Available"
+        hasUpdate -> "FitTrack v${latest?.versionName.orEmpty()} Available"
         latest != null -> "What's New in v${latest.versionName}"
         else -> "App Update"
     }
@@ -243,7 +243,7 @@ fun ReleaseChangelogCard(
             Spacer(modifier = Modifier.height(10.dp))
             ChangelogCategoryBlock(
                 title = "Improvements",
-                icon = Icons.Filled.TrendingUp,
+                icon = Icons.AutoMirrored.Filled.TrendingUp,
                 tint = MaterialTheme.colorScheme.secondary,
                 items = content.improvements
             )

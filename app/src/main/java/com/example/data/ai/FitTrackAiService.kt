@@ -5,6 +5,8 @@ import android.util.Log
 import com.example.data.model.UserProfile
 import com.example.data.model.WorkoutExerciseEntry
 import com.example.data.model.WorkoutPlan
+import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.google.firebase.Firebase
 import com.google.firebase.ai.ai
 import com.google.firebase.ai.type.Schema
@@ -172,19 +174,14 @@ class FitTrackAiService {
         todayWaterMl: Long,
         workoutContextSummary: String = ""
     ): Flow<String> = flow {
-        val contextPrompt = buildString {
-            appendLine("User Context:")
-            if (profile != null) {
-                appendLine("- Name: ${profile.displayName}, Age: ${profile.ageYears}, Goal: ${profile.goal}")
-                appendLine("- Weight: ${profile.weightKg} kg, Target Weight: ${profile.targetWeightKg} kg")
-                appendLine("- Daily Targets: ${profile.dailyStepGoal} steps, ${profile.dailyCalorieTarget} kcal, ${profile.dailyWaterTargetMl} ml water")
-            }
-            appendLine("- Today so far: $todaySteps steps, ${todayCaloriesIn.toInt()} kcal logged, $todayWaterMl ml water.")
-            if (workoutContextSummary.isNotBlank()) {
-                appendLine("- Recent Training: $workoutContextSummary")
-            }
-            appendLine("User question: $userMessage")
-        }
+        val contextPrompt = buildCoachContextPrompt(
+            userMessage = userMessage,
+            profile = profile,
+            todaySteps = todaySteps,
+            todayCaloriesIn = todayCaloriesIn,
+            todayWaterMl = todayWaterMl,
+            workoutContextSummary = workoutContextSummary
+        )
 
         val accumulated = StringBuilder()
         try {
@@ -312,12 +309,19 @@ class FitTrackAiService {
         carbsG: Int,
         fatG: Int,
         preferences: String,
-        allergies: String
+        allergies: String,
+        isMinor: Boolean = false
     ): AiMealPlanResult {
-        val prompt = "Create a balanced 1-day meal plan (breakfast, lunch, dinner, snack) targeting approximately " +
-            "$calorieTarget kcal ($proteinG g protein, $carbsG g carbs, $fatG g fat). " +
-            "Dietary preferences: ${preferences.ifBlank { "Balanced" }}. " +
-            "Allergies/Exclusions: ${allergies.ifBlank { "None" }}. Provide nutritional estimates."
+        val safeCalories = safeMealPlanCalorieFloor(calorieTarget, isMinor)
+        val prompt = buildString {
+            append("Create a balanced 1-day meal plan (breakfast, lunch, dinner, snack) targeting approximately ")
+            append("$safeCalories kcal ($proteinG g protein, $carbsG g carbs, $fatG g fat). ")
+            append("Dietary preferences: ${preferences.ifBlank { "Balanced" }}. ")
+            append("Allergies/Exclusions: ${allergies.ifBlank { "None" }}. Provide nutritional estimates.")
+            if (isMinor) {
+                append(" User is under 18: focus strictly on nourishing growth-supportive maintenance meals, never calorie deficits or weight-loss restriction.")
+            }
+        }
         return try {
             val response = withTimeout(60_000L) {
                 mealPlanModel.generateContent(prompt)
@@ -382,14 +386,19 @@ class FitTrackAiService {
         recentSessionsSummary: String,
         personalRecordsSummary: String
     ): String {
+        val isMinor = profile != null && FitnessCalculator.isMinorFromProfile(profile.ageYears, profile.dateOfBirthIso)
         val prompt = buildString {
             appendLine("Review this athlete's training history and provide concise, practical guidance:")
             if (profile != null) {
-                appendLine("Goal: ${profile.goal}, Activity: ${profile.activityLevel}, Age: ${profile.ageYears}")
+                val ageYears = FitnessCalculator.resolveAgeYears(profile.ageYears, profile.dateOfBirthIso)
+                appendLine("Goal: ${profile.goal}, Activity: ${profile.activityLevel}, Age: $ageYears")
+                if (isMinor) {
+                    appendLine("MINOR GUARDRAIL: Emphasize technique mastery, moderate sub-maximal loads, adequate rest, and never weight loss deficits.")
+                }
             }
             appendLine("Recent sessions: $recentSessionsSummary")
             appendLine("Personal records: $personalRecordsSummary")
-            appendLine("Give: 1) Volume & consistency observation, 2) Safe progressive overload focus, 3) Recovery/deload tip. Avoid medical claims.")
+            appendLine("Give: 1) Volume & consistency observation, 2) Safe progressive overload focus, 3) Recovery/deload tip. Avoid medical claims or pushing through acute pain.")
         }
         return try {
             val response = withTimeout(60_000L) {
@@ -408,7 +417,46 @@ class FitTrackAiService {
         }
     }
 
-    private companion object {
-        const val TAG = "FitTrackAiService"
+    companion object {
+        private const val TAG = "FitTrackAiService"
+
+        fun safeMealPlanCalorieFloor(requestedCalories: Int, isMinor: Boolean): Int {
+            return if (isMinor) requestedCalories.coerceAtLeast(1800) else requestedCalories.coerceAtLeast(1200)
+        }
+
+        fun buildCoachContextPrompt(
+            userMessage: String,
+            profile: UserProfile?,
+            todaySteps: Long,
+            todayCaloriesIn: Double,
+            todayWaterMl: Long,
+            workoutContextSummary: String = ""
+        ): String {
+            val isMinor = profile != null && FitnessCalculator.isMinorFromProfile(profile.ageYears, profile.dateOfBirthIso)
+            val unitSystem = profile?.unitSystem ?: "metric"
+            return buildString {
+                appendLine("User Context:")
+                if (profile != null) {
+                    val effectiveAge = FitnessCalculator.resolveAgeYears(profile.ageYears, profile.dateOfBirthIso)
+                    val safeGoal = if (isMinor && profile.goal == "weight_loss") "weight_maintenance" else profile.goal
+                    appendLine("- Name: ${profile.displayName}, Age: $effectiveAge, Goal: $safeGoal, Unit System: $unitSystem")
+                    appendLine("- Current Weight: ${UnitFormatter.formatWeight(profile.weightKg, unitSystem)}")
+                    if (!isMinor) {
+                        appendLine("- Target Weight: ${UnitFormatter.formatWeight(profile.targetWeightKg, unitSystem)}")
+                    }
+                    val safeCalTarget = if (isMinor) profile.dailyCalorieTarget.coerceAtLeast(1800L) else profile.dailyCalorieTarget
+                    appendLine("- Daily Targets: ${profile.dailyStepGoal} steps, $safeCalTarget kcal, ${UnitFormatter.formatWater(profile.dailyWaterTargetMl, unitSystem)} water")
+                    if (isMinor) {
+                        appendLine("- MINOR SAFETY GUARDRAIL (Age < 18): Provide growth-supportive balanced nutrition and age-appropriate exercise technique guidance only. NEVER suggest calorie deficits, weight loss dieting, fasting, or maximal 1RM attempts.")
+                    }
+                }
+                appendLine("- Today so far: $todaySteps steps, ${todayCaloriesIn.toInt()} kcal logged, ${UnitFormatter.formatWater(todayWaterMl, unitSystem)} water.")
+                if (workoutContextSummary.isNotBlank()) {
+                    appendLine("- Recent Training: $workoutContextSummary")
+                }
+                appendLine("- Medical Safety: Never diagnose injuries or recommend training through sharp/joint pain.")
+                appendLine("User question: $userMessage")
+            }
+        }
     }
 }

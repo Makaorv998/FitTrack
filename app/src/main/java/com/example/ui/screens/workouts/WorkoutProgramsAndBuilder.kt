@@ -63,6 +63,8 @@ import com.example.data.model.WorkoutExerciseEntry
 import com.example.data.model.WorkoutPlan
 import com.example.data.model.WorkoutProgram
 import com.example.data.model.estimatedDurationMinutes
+import com.example.domain.UnitFormatter
+import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.TrainingPreferences
 import com.example.ui.components.EmptyStateCard
 import com.example.ui.components.FitTrackBottomSheet
@@ -103,6 +105,7 @@ fun WorkoutProgramsView(
     onDeleteProgram: (String) -> Unit,
     onOpenAiPlanner: () -> Unit
 ) {
+    val unitSystem = profile?.unitSystem ?: "metric"
     val personalizedPrograms = remember(profile) {
         WorkoutCatalog.personalizedProgramsForUser(profile)
     }
@@ -306,7 +309,7 @@ fun WorkoutProgramsView(
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         plan.exercises.take(5).forEach { ex ->
-                            val wt = if (ex.targetWeightKg > 0.0) " @ ${ex.targetWeightKg.toInt()} kg" else ""
+                            val wt = if (ex.targetWeightKg > 0.0) " @ ${WorkoutAnalyticsEngine.formatWeight(ex.targetWeightKg, unitSystem)}" else ""
                             Text(
                                 text = "• ${ex.exerciseName}: ${ex.targetSets} × ${ex.repRangeMin}-${ex.repRangeMax}$wt (${ex.restSeconds}s)",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -378,6 +381,7 @@ fun WorkoutProgramsView(
     if (showBuilderSheet) {
         WorkoutBuilderSheet(
             initialPlan = builderPlan,
+            unitSystem = unitSystem,
             onDismiss = { showBuilderSheet = false },
             onSave = { saved ->
                 onSavePlan(saved)
@@ -548,6 +552,7 @@ private fun ProgramCard(
 @Composable
 fun WorkoutBuilderSheet(
     initialPlan: WorkoutPlan?,
+    unitSystem: String = "metric",
     onDismiss: () -> Unit,
     onSave: (WorkoutPlan) -> Unit,
     onSaveAndScheduleToday: ((WorkoutPlan) -> Unit)? = null
@@ -712,14 +717,16 @@ fun WorkoutBuilderSheet(
                                 )
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                val displayWeight = UnitFormatter.kgToDisplayWeight(item.targetWeightKg, unitSystem)
                                 OutlinedTextField(
-                                    value = if (item.targetWeightKg <= 0.0) "" else if (item.targetWeightKg % 1.0 == 0.0) item.targetWeightKg.toInt().toString() else item.targetWeightKg.toString(),
+                                    value = if (item.targetWeightKg <= 0.0) "" else if (kotlin.math.abs(displayWeight - displayWeight.toInt()) < 0.05) displayWeight.toInt().toString() else String.format(java.util.Locale.US, "%.1f", displayWeight),
                                     onValueChange = { v ->
                                         val clean = v.filter { it.isDigit() || it == '.' }
-                                        val w = clean.toDoubleOrNull() ?: 0.0
-                                        entries[idx] = item.copy(targetWeightKg = w.coerceIn(0.0, 500.0))
+                                        val wDisplay = clean.toDoubleOrNull() ?: 0.0
+                                        val canonicalKg = UnitFormatter.inputWeightToKg(wDisplay, unitSystem)
+                                        entries[idx] = item.copy(targetWeightKg = canonicalKg.coerceIn(0.0, 500.0))
                                     },
-                                    label = { Text("Target kg") },
+                                    label = { Text("Target ${UnitFormatter.weightUnitLabel(unitSystem)}") },
                                     placeholder = { Text("BW / 0") },
                                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                     singleLine = true,

@@ -68,6 +68,7 @@ import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
 import com.example.data.model.estimatedDurationMinutes
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.todayDateKey
 import com.example.ui.branding.FitTrackGeometricIllustration
@@ -133,8 +134,9 @@ fun HomeScreen(
     val waterGoal = (profile?.dailyWaterTargetMl ?: 2500L).coerceAtLeast(500L)
     val stepProgress = (todaySteps.toFloat() / stepGoal.toFloat()).coerceIn(0f, 1f)
     val stepCompletionPct = ((todaySteps.toDouble() / stepGoal.toDouble()) * 100.0).toInt().coerceAtLeast(0)
+    val unitSystem = profile?.unitSystem ?: "metric"
     val distanceKm = FitnessCalculator.calculateWalkingDistanceKm(todaySteps, profile?.heightCm ?: 175.0)
-    val stepCaloriesBurned = (todaySteps * 0.04) * ((profile?.weightKg ?: 70.0) / 70.0)
+    val stepCaloriesBurned = FitnessCalculator.calculateStepCalories(todaySteps, profile?.weightKg ?: 70.0)
     val todayWorkoutCalories = workoutSessions.filter { it.dateKey == today }.sumOf { it.caloriesBurned }
     val todayGpsCalories = gpsActivities.filter {
         SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(it.startedAtMs)) == today
@@ -142,11 +144,19 @@ fun HomeScreen(
     val totalBurnedToday = stepCaloriesBurned + todayWorkoutCalories + todayGpsCalories
     val remainingCalories = calorieGoal - todayCaloriesIn.toLong()
 
-    val weeklyCutoffKey = remember {
-        val cal = Calendar.getInstance()
-        cal.add(Calendar.DAY_OF_YEAR, -6)
-        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(cal.time)
+    val weeklyCutoffCal = remember {
+        Calendar.getInstance().apply {
+            add(Calendar.DAY_OF_YEAR, -6)
+            set(Calendar.HOUR_OF_DAY, 0)
+            set(Calendar.MINUTE, 0)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
     }
+    val weeklyCutoffKey = remember(weeklyCutoffCal) {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).format(weeklyCutoffCal.time)
+    }
+    val weeklyCutoffMs = remember(weeklyCutoffCal) { weeklyCutoffCal.timeInMillis }
     val weeklyStepRecords = remember(stepRecords, weeklyCutoffKey) {
         stepRecords.filter { it.dateKey >= weeklyCutoffKey }.sortedBy { it.dateKey }
     }
@@ -156,6 +166,12 @@ fun HomeScreen(
     val weeklyTotalSteps = remember(weeklyStepRecords, todaySteps, today) {
         val fromRecords = weeklyStepRecords.filterNot { it.dateKey == today }.sumOf { it.steps }
         fromRecords + todaySteps
+    }
+    val weekGpsKm = remember(gpsActivities, weeklyCutoffMs) {
+        gpsActivities.filter {
+            val ts = if (it.startedAtMs > 0L) it.startedAtMs else (it.createdAt?.toDate()?.time ?: 0L)
+            ts >= weeklyCutoffMs
+        }.sumOf { it.distanceKm }
     }
 
     val macroTargets = remember(profile, calorieGoal) {
@@ -190,10 +206,10 @@ fun HomeScreen(
         workoutSessions.maxByOrNull { it.createdAt?.seconds ?: 0L } ?: workoutSessions.firstOrNull()
     }
 
-    val coachInsight = remember(todaySteps, stepGoal, todayCaloriesIn, calorieGoal, todayWaterMl, waterGoal, latestSession, todayProtein, macroTargets) {
+    val coachInsight = remember(todaySteps, stepGoal, todayCaloriesIn, calorieGoal, todayWaterMl, waterGoal, latestSession, todayProtein, macroTargets, unitSystem) {
         when {
             todaySteps < stepGoal / 2 -> "You're at $stepCompletionPct% of your step target — a brisk 15-min walk adds ~1,500 steps."
-            todayWaterMl < waterGoal / 2 -> "Hydration is at $todayWaterMl / $waterGoal ml. Log a glass of water to keep recovery on track."
+            todayWaterMl < waterGoal / 2 -> "Hydration is at ${UnitFormatter.formatWaterRatio(todayWaterMl, waterGoal, unitSystem)}. Log a glass of water to keep recovery on track."
             todayProtein < macroTargets.proteinGrams * 0.6 && todayMeals.isNotEmpty() ->
                 "Protein is at ${todayProtein.toInt()}g of ${macroTargets.proteinGrams}g — prioritize lean protein in your next meal."
             latestSession == null && upcomingPlan != null ->
@@ -329,14 +345,14 @@ fun HomeScreen(
                             HeroSubStat(
                                 icon = Icons.Filled.WaterDrop,
                                 label = "Water",
-                                value = "$todayWaterMl / $waterGoal ml",
+                                value = UnitFormatter.formatWaterRatio(todayWaterMl, waterGoal, unitSystem),
                                 tint = MaterialTheme.colorScheme.secondary
                             )
                         }
                     }
                     Spacer(modifier = Modifier.height(10.dp))
                     Text(
-                        text = String.format(Locale.US, "Step distance: %.2f km today", distanceKm),
+                        text = "Step distance: ${UnitFormatter.formatDistance(distanceKm, unitSystem)} today",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -421,8 +437,7 @@ fun HomeScreen(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("GPS Distance", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            val weekGpsKm = gpsActivities.take(10).sumOf { it.distanceKm }
-                            Text(String.format(Locale.US, "%.1f km", weekGpsKm), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
+                            Text(UnitFormatter.formatDistance(weekGpsKm, unitSystem, decimals = 1), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
                         }
                     }
                     if (weeklyStepRecords.isNotEmpty()) {
@@ -536,7 +551,7 @@ fun HomeScreen(
                             }
                             Column(horizontalAlignment = Alignment.End) {
                                 Text(
-                                    text = WorkoutAnalyticsEngine.formatWeight(latestSession.totalVolumeKg),
+                                    text = UnitFormatter.formatWeight(latestSession.totalVolumeKg, unitSystem, decimals = 0),
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.secondary,
                                     fontWeight = FontWeight.Bold
@@ -574,7 +589,7 @@ fun HomeScreen(
                         }
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("Water", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text("$todayWaterMl / $waterGoal ml", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
+                            Text(UnitFormatter.formatWaterRatio(todayWaterMl, waterGoal, unitSystem), style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.secondary)
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("Remaining", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)

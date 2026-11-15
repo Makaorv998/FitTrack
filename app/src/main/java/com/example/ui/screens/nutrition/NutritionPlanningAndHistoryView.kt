@@ -56,6 +56,7 @@ import com.example.data.model.FoodItem
 import com.example.data.model.MealLog
 import com.example.data.model.UserProfile
 import com.example.data.model.WaterLog
+import com.example.domain.UnitFormatter
 import com.example.platform.NutritionPreferences
 import com.example.platform.PlannedMealEntry
 import com.example.platform.RecipeIngredient
@@ -86,6 +87,7 @@ fun NutritionHistoryAndReportView(
     onDeleteMeal: (String) -> Unit
 ) {
     val ext = LocalFitTrackColors.current
+    val unitSystem = profile?.unitSystem ?: "metric"
     val today = remember { todayDateKey() }
     val recentDates = remember(today) {
         val fmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
@@ -176,7 +178,7 @@ fun NutritionHistoryAndReportView(
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Weekly hydration logged: ${weeklyWaterTotal} ml",
+                    text = "Weekly hydration logged: ${UnitFormatter.formatWater(weeklyWaterTotal, unitSystem)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.secondary
                 )
@@ -226,7 +228,7 @@ fun NutritionHistoryAndReportView(
                     Column {
                         Text(selectedDateKey, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                         Text(
-                            "$dayCals kcal • P ${dayP}g / C ${dayC}g / F ${dayF}g • Water ${selectedDayWater} ml",
+                            "$dayCals kcal • P ${dayP}g / C ${dayC}g / F ${dayF}g • Water ${UnitFormatter.formatWater(selectedDayWater, unitSystem)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
@@ -260,8 +262,9 @@ fun NutritionHistoryAndReportView(
                                 Text(meal.foodName, style = MaterialTheme.typography.titleMedium)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                            val u = meal.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                             Text(
-                                "${meal.grams.toInt()}g • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
+                                "${meal.grams.toInt()}$u • ${meal.calories.toInt()} kcal • P ${meal.proteinG.toInt()}g / C ${meal.carbsG.toInt()}g / F ${meal.fatG.toInt()}g",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -434,8 +437,9 @@ fun NutritionRecipesAndPlanView(
                                 Text(planned.title, style = MaterialTheme.typography.titleMedium)
                             }
                             Spacer(modifier = Modifier.height(4.dp))
+                            val u = planned.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                             Text(
-                                "${planned.grams.toInt()}g • ${planned.calories.toInt()} kcal • P ${planned.proteinG.toInt()}g / C ${planned.carbsG.toInt()}g / F ${planned.fatG.toInt()}g",
+                                "${planned.grams.toInt()}$u • ${planned.calories.toInt()} kcal • P ${planned.proteinG.toInt()}g / C ${planned.carbsG.toInt()}g / F ${planned.fatG.toInt()}g",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -512,6 +516,7 @@ private fun RecipeBuilderSheet(
     val ext = LocalFitTrackColors.current
     var name by remember { mutableStateOf("") }
     var servingsText by remember { mutableStateOf("2") }
+    var recipeUnit by remember { mutableStateOf("g") }
     var search by remember { mutableStateOf("") }
     var ingredientGramsText by remember { mutableStateOf("100") }
     val ingredients = remember { mutableStateListOf<RecipeIngredient>() }
@@ -554,6 +559,10 @@ private fun RecipeBuilderSheet(
                     modifier = Modifier.weight(0.8f)
                 )
             }
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(selected = recipeUnit == "g", onClick = { recipeUnit = "g" }, label = { Text("Serving unit: g") })
+                FilterChip(selected = recipeUnit == "ml", onClick = { recipeUnit = "ml" }, label = { Text("Serving unit: ml") })
+            }
 
             if (ingredients.isNotEmpty()) {
                 Surface(
@@ -575,7 +584,7 @@ private fun RecipeBuilderSheet(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    "${ing.foodName} (${ing.grams.toInt()}g • ${ing.calories.toInt()} kcal)",
+                                    "${ing.foodName} (${ing.grams.toInt()}${ing.measurementUnit} • ${ing.calories.toInt()} kcal)",
                                     style = MaterialTheme.typography.bodySmall,
                                     modifier = Modifier.weight(1f)
                                 )
@@ -607,14 +616,15 @@ private fun RecipeBuilderSheet(
                 OutlinedTextField(
                     value = ingredientGramsText,
                     onValueChange = { ingredientGramsText = it.filter { c -> c.isDigit() || c == '.' } },
-                    label = { Text("Grams") },
+                    label = { Text("Amount (g/ml)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true,
-                    modifier = Modifier.weight(0.8f)
+                    modifier = Modifier.weight(0.9f)
                 )
             }
 
             matching.forEach { food ->
+                val foodUnit = food.measurementUnit.takeIf { it == "g" || it == "ml" } ?: "g"
                 Surface(
                     onClick = {
                         val g = (ingredientGramsText.toDoubleOrNull() ?: 100.0).coerceIn(1.0, 5000.0)
@@ -623,6 +633,7 @@ private fun RecipeBuilderSheet(
                             RecipeIngredient(
                                 foodName = food.name,
                                 grams = g,
+                                measurementUnit = foodUnit,
                                 calories = food.caloriesPer100g * factor,
                                 proteinG = food.proteinPer100g * factor,
                                 carbsG = food.carbsPer100g * factor,
@@ -644,7 +655,7 @@ private fun RecipeBuilderSheet(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(food.name, style = MaterialTheme.typography.titleSmall)
-                            Text("${food.caloriesPer100g.toInt()} kcal/100g", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
+                            Text("${food.caloriesPer100g.toInt()} kcal/100$foodUnit", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.secondary)
                         }
                         Icon(Icons.Filled.Add, contentDescription = "Add ${food.name}", tint = MaterialTheme.colorScheme.primary)
                     }
@@ -659,6 +670,7 @@ private fun RecipeBuilderSheet(
                         SavedRecipe(
                             name = name.trim(),
                             servings = servings,
+                            measurementUnit = recipeUnit,
                             ingredients = ingredients.toList()
                         )
                     )
@@ -729,6 +741,8 @@ private fun AddPlannedMealDialog(
     var day by remember { mutableStateOf(initialDay) }
     var mealType by remember { mutableStateOf("lunch") }
     var title by remember { mutableStateOf("") }
+    var portionText by remember { mutableStateOf("300") }
+    var unit by remember { mutableStateOf("g") }
     var calsText by remember { mutableStateOf("500") }
     var pText by remember { mutableStateOf("35") }
     var cText by remember { mutableStateOf("50") }
@@ -757,6 +771,18 @@ private fun AddPlannedMealDialog(
                         )
                     }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    OutlinedTextField(
+                        value = portionText,
+                        onValueChange = { portionText = it.filter { c -> c.isDigit() || c == '.' } },
+                        label = { Text("Amount ($unit)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        modifier = Modifier.weight(1f),
+                        singleLine = true
+                    )
+                    FilterChip(selected = unit == "g", onClick = { unit = "g" }, label = { Text("g") })
+                    FilterChip(selected = unit == "ml", onClick = { unit = "ml" }, label = { Text("ml") })
+                }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedTextField(value = calsText, onValueChange = { calsText = it }, label = { Text("kcal") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f), singleLine = true)
                     OutlinedTextField(value = pText, onValueChange = { pText = it }, label = { Text("P (g)") }, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f), singleLine = true)
@@ -776,7 +802,8 @@ private fun AddPlannedMealDialog(
                             dayOfWeek = day,
                             mealType = mealType,
                             title = title.trim(),
-                            grams = 300.0,
+                            grams = (portionText.toDoubleOrNull() ?: 300.0).coerceIn(1.0, 5000.0),
+                            measurementUnit = unit,
                             calories = (calsText.toDoubleOrNull() ?: 500.0).coerceAtLeast(0.0),
                             proteinG = (pText.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),
                             carbsG = (cText.toDoubleOrNull() ?: 0.0).coerceAtLeast(0.0),

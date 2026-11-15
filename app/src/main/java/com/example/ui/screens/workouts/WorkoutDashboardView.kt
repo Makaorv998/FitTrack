@@ -103,6 +103,7 @@ fun WorkoutDashboardView(
     onDeleteTrainingNote: (String) -> Unit
 ) {
     val ext = LocalFitTrackColors.current
+    val unitSystem = profile?.unitSystem ?: "metric"
     val today = remember { todayDateKey() }
     val todaySchedule = remember(schedules, today) { schedules.firstOrNull { it.dateKey == today } }
     val upcomingSchedule = remember(schedules, today) {
@@ -345,8 +346,8 @@ fun WorkoutDashboardView(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     StatCard(
                         title = "Weekly Volume",
-                        value = "${weeklyVolumeKg.toInt()} kg",
-                        subtitle = "All-time ${metrics.totalWorkingVolumeKg.toInt()} kg",
+                        value = WorkoutAnalyticsEngine.formatVolume(weeklyVolumeKg, unitSystem),
+                        subtitle = "All-time ${WorkoutAnalyticsEngine.formatVolume(metrics.totalWorkingVolumeKg, unitSystem)}",
                         icon = Icons.Filled.EmojiEvents,
                         tint = ext.success,
                         modifier = Modifier.weight(1f),
@@ -455,13 +456,17 @@ fun WorkoutDashboardView(
                             Text(pr.exerciseName, style = MaterialTheme.typography.titleMedium, maxLines = 1)
                             Spacer(modifier = Modifier.height(4.dp))
                             Text(
-                                text = "${WorkoutAnalyticsEngine.formatWeight(pr.weightKg)} × ${pr.reps}",
+                                text = "${WorkoutAnalyticsEngine.formatWeight(pr.weightKg, unitSystem)} × ${pr.reps}",
                                 style = MaterialTheme.typography.headlineSmall,
                                 color = MaterialTheme.colorScheme.secondary,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Est 1RM: ${String.format(Locale.US, "%.1f", pr.estimatedOneRmKg)} kg",
+                                text = if (pr.weightKg <= 0.0) {
+                                    "Bodyweight PR"
+                                } else {
+                                    "Est 1RM: ${WorkoutAnalyticsEngine.formatWeight(pr.estimatedOneRmKg, unitSystem)}"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -477,15 +482,16 @@ fun WorkoutDashboardView(
                 FitTrackCard(modifier = Modifier.fillMaxWidth()) {
                     SectionHeader(title = "Working Sets by Muscle")
                     Spacer(modifier = Modifier.height(10.dp))
-                    val maxSets = (metrics.muscleDistribution.maxOfOrNull { it.second } ?: 1).coerceAtLeast(1)
-                    metrics.muscleDistribution.take(5).forEachIndexed { idx, (muscle, count) ->
+                    val topMuscles = metrics.muscleDistribution.take(5)
+                    val maxSets = (topMuscles.maxOfOrNull { it.second } ?: 1).coerceAtLeast(1)
+                    topMuscles.forEachIndexed { idx, (muscle, count) ->
                         AuroraProgressBar(
                             label = muscle,
                             valueText = "$count sets",
                             progress = count.toFloat() / maxSets.toFloat(),
                             color = if (idx % 2 == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
                         )
-                        if (idx < 4) Spacer(modifier = Modifier.height(8.dp))
+                        if (idx < topMuscles.lastIndex) Spacer(modifier = Modifier.height(8.dp))
                     }
                 }
             }
@@ -521,7 +527,7 @@ fun WorkoutDashboardView(
                     Spacer(modifier = Modifier.height(6.dp))
                     val workVol = if (s.workingVolumeKg > 0.0) s.workingVolumeKg else s.totalVolumeKg
                     Text(
-                        text = "${FitnessCalculator.formatDuration(s.durationSeconds)} • ${s.setsCompleted} sets • ${workVol.toInt()} kg working vol • ${s.caloriesBurned.toInt()} kcal",
+                        text = "${FitnessCalculator.formatDuration(s.durationSeconds)} • ${s.setsCompleted} sets • ${WorkoutAnalyticsEngine.formatVolume(workVol, unitSystem)} working vol • ${s.caloriesBurned.toInt()} kcal",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )

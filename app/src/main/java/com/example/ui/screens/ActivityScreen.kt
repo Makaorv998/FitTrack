@@ -56,10 +56,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.example.data.model.GpsActivity
 import com.example.data.model.StepRecord
 import com.example.data.model.UserProfile
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.platform.GpsTrackerState
 import com.example.platform.StepSensorState
 import com.example.platform.TrackingStatus
@@ -89,8 +91,6 @@ import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
-private val Int.sp get() = androidx.compose.ui.unit.TextUnit(this.toFloat(), androidx.compose.ui.unit.TextUnitType.Sp)
-
 @Composable
 fun ActivityScreen(
     profile: UserProfile?,
@@ -114,11 +114,12 @@ fun ActivityScreen(
     var startPendingPermission by remember { mutableStateOf(false) }
     var statsWindowIndex by remember { mutableIntStateOf(0) } // 0 = Weekly (7D), 1 = Monthly (30D)
 
+    val unitSystem = profile?.unitSystem ?: "metric"
     val stepGoal = (profile?.dailyStepGoal ?: 10000L).coerceAtLeast(1000L)
     val heightCm = profile?.heightCm ?: 172.0
     val weightKg = profile?.weightKg ?: 70.0
     val stepDistanceKm = FitnessCalculator.calculateWalkingDistanceKm(todaySteps, heightCm)
-    val stepCalories = (todaySteps * 0.04) * (weightKg / 70.0)
+    val stepCalories = FitnessCalculator.calculateStepCalories(todaySteps, weightKg)
     val activeMinutes = (todaySteps / 100L).toInt()
 
     val windowDays = if (statsWindowIndex == 0) 7 else 30
@@ -206,7 +207,7 @@ fun ActivityScreen(
                             )
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = String.format(Locale.US, "%.2f km • %.0f kcal • %d min", stepDistanceKm, stepCalories, activeMinutes),
+                                text = "${UnitFormatter.formatDistance(stepDistanceKm, unitSystem)} • ${stepCalories.toInt()} kcal • $activeMinutes min",
                                 style = MaterialTheme.typography.labelLarge,
                                 color = MaterialTheme.colorScheme.secondary
                             )
@@ -265,18 +266,21 @@ fun ActivityScreen(
                         ModalitySummaryTile(
                             title = "Walking",
                             sessions = walkingSessions,
+                            unitSystem = unitSystem,
                             tint = MaterialTheme.colorScheme.secondary,
                             modifier = Modifier.weight(1f)
                         )
                         ModalitySummaryTile(
                             title = "Running",
                             sessions = runningSessions,
+                            unitSystem = unitSystem,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.weight(1f)
                         )
                         ModalitySummaryTile(
                             title = "Cycling",
                             sessions = cyclingSessions,
+                            unitSystem = unitSystem,
                             tint = ext.success,
                             modifier = Modifier.weight(1f)
                         )
@@ -326,9 +330,9 @@ fun ActivityScreen(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            TelemetryStat("Distance", String.format(Locale.US, "%.2f km", gpsState.distanceKm))
+                            TelemetryStat("Distance", UnitFormatter.formatDistance(gpsState.distanceKm, unitSystem))
                             TelemetryStat("Duration", FitnessCalculator.formatDuration(gpsState.elapsedSeconds))
-                            TelemetryStat("Pace", FitnessCalculator.formatPace(gpsState.avgPaceMinPerKm))
+                            TelemetryStat("Pace", UnitFormatter.formatPace(gpsState.avgPaceMinPerKm, unitSystem))
                             TelemetryStat("Burn", "${gpsState.estimatedCalories.toInt()} kcal")
                         }
                         Spacer(modifier = Modifier.height(12.dp))
@@ -436,7 +440,7 @@ fun ActivityScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         TelemetryStat("Avg Steps", "$avgSteps")
-                        TelemetryStat("Distance", String.format(Locale.US, "%.1f km", totalDist))
+                        TelemetryStat("Distance", UnitFormatter.formatDistance(totalDist, unitSystem, decimals = 1))
                         TelemetryStat("Burned", "${totalBurn.toInt()} kcal")
                         TelemetryStat("Sessions", "${windowGps.size}")
                     }
@@ -516,12 +520,12 @@ fun ActivityScreen(
                                 }
                                 Spacer(modifier = Modifier.height(6.dp))
                                 Text(
-                                    text = "${String.format(Locale.US, "%.2f", session.distanceKm)} km • ${FitnessCalculator.formatDuration(session.durationSeconds)}",
+                                    text = "${UnitFormatter.formatDistance(session.distanceKm, unitSystem)} • ${FitnessCalculator.formatDuration(session.durationSeconds)}",
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
                                 Text(
-                                    text = "Pace ${FitnessCalculator.formatPace(session.avgPaceMinPerKm)} • ${session.caloriesBurned.toInt()} kcal",
+                                    text = "Pace ${UnitFormatter.formatPace(session.avgPaceMinPerKm, unitSystem)} • ${session.caloriesBurned.toInt()} kcal",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -552,6 +556,7 @@ fun ActivityScreen(
 private fun ModalitySummaryTile(
     title: String,
     sessions: List<GpsActivity>,
+    unitSystem: String,
     tint: Color,
     modifier: Modifier = Modifier
 ) {
@@ -567,7 +572,7 @@ private fun ModalitySummaryTile(
         Text(title, style = MaterialTheme.typography.labelLarge, color = tint, fontWeight = FontWeight.Bold)
         Spacer(modifier = Modifier.height(4.dp))
         Text(
-            text = String.format(Locale.US, "%.1f km", totalKm),
+            text = UnitFormatter.formatDistance(totalKm, unitSystem, decimals = 1),
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Bold
         )

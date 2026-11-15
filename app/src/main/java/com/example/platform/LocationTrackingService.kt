@@ -36,6 +36,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
+
 enum class TrackingStatus { IDLE, ACTIVE, PAUSED }
 
 data class GpsTrackerState(
@@ -53,14 +57,100 @@ data class GpsTrackerState(
 )
 
 object GpsTrackerStore {
+    private const val PREFS_NAME = "fittrack_gps_tracker_prefs"
+    private const val KEY_SESSION = "active_gps_session_json"
+
+    private var prefs: SharedPreferences? = null
     private val _state = MutableStateFlow(GpsTrackerState())
     val state: StateFlow<GpsTrackerState> = _state.asStateFlow()
 
-    internal fun update(transform: (GpsTrackerState) -> GpsTrackerState) {
-        _state.value = transform(_state.value)
+    fun initialize(context: Context) {
+        prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (_state.value.status == TrackingStatus.IDLE) {
+            restoreFromDisk()
+        }
     }
 
-    internal fun reset() {
+    private fun restoreFromDisk() {
+        val raw = prefs?.getString(KEY_SESSION, null).orEmpty()
+        if (raw.isBlank()) return
+        runCatching {
+            val root = JSONObject(raw)
+            val savedStatus = runCatching {
+                TrackingStatus.valueOf(root.optString("status", "IDLE"))
+            }.getOrDefault(TrackingStatus.IDLE)
+            if (savedStatus != TrackingStatus.IDLE) {
+                val ptsArray = root.optJSONArray("routePoints") ?: JSONArray()
+                val pts = buildList {
+                    for (i in 0 until ptsArray.length()) {
+                        val obj = ptsArray.optJSONObject(i) ?: continue
+                        add(
+                            LatLngPoint(
+                                lat = obj.optDouble("lat", 0.0),
+                                lng = obj.optDouble("lng", 0.0),
+                                timestampMs = obj.optLong("timestampMs", 0L)
+                            )
+                        )
+                    }
+                }
+                // Restore crashed ACTIVE sessions as PAUSED so users can inspect/resume or finish cleanly.
+                _state.value = GpsTrackerState(
+                    status = TrackingStatus.PAUSED,
+                    activityType = root.optString("activityType", "running"),
+                    elapsedSeconds = root.optLong("elapsedSeconds", 0L),
+                    distanceKm = root.optDouble("distanceKm", 0.0),
+                    currentSpeedKmh = 0.0,
+                    avgPaceMinPerKm = root.optDouble("avgPaceMinPerKm", 0.0),
+                    estimatedCalories = root.optDouble("estimatedCalories", 0.0),
+                    routePoints = pts,
+                    startedAtMs = root.optLong("startedAtMs", 0L),
+                    weightKg = root.optDouble("weightKg", 70.0)
+                )
+            }
+        }
+    }
+
+    private fun persistToDisk(state: GpsTrackerState) {
+        val store = prefs ?: return
+        if (state.status == TrackingStatus.IDLE) {
+            store.edit().remove(KEY_SESSION).commit()
+            return
+        }
+        val ptsArray = JSONArray().apply {
+            state.routePoints.forEach { pt ->
+                put(
+                    JSONObject()
+                        .put("lat", pt.lat)
+                        .put("lng", pt.lng)
+                        .put("timestampMs", pt.timestampMs)
+                )
+            }
+        }
+        val payload = JSONObject()
+            .put("status", state.status.name)
+            .put("activityType", state.activityType)
+            .put("elapsedSeconds", state.elapsedSeconds)
+            .put("distanceKm", state.distanceKm)
+            .put("avgPaceMinPerKm", state.avgPaceMinPerKm)
+            .put("estimatedCalories", state.estimatedCalories)
+            .put("startedAtMs", state.startedAtMs)
+            .put("weightKg", state.weightKg)
+            .put("routePoints", ptsArray)
+            .toString()
+        store.edit().putString(KEY_SESSION, payload).commit()
+    }
+
+    internal fun update(transform: (GpsTrackerState) -> GpsTrackerState) {
+        val updated = transform(_state.value)
+        _state.value = updated
+        persistToDisk(updated)
+    }
+
+    internal fun reset(context: Context? = null) {
+        if (context != null) {
+            prefs = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        }
+        prefs?.edit()?.remove(KEY_SESSION)?.commit()
         _state.value = GpsTrackerState()
     }
 }
@@ -122,11 +212,13 @@ class LocationTrackingService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        GpsTrackerStore.initialize(applicationContext)
         fusedClient = LocationServices.getFusedLocationProviderClient(this)
         createNotificationChannel()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        GpsTrackerStore.initialize(applicationContext)
         when (intent?.action) {
             ACTION_START -> {
                 val type = intent.getStringExtra(EXTRA_ACTIVITY_TYPE) ?: "running"
@@ -163,7 +255,17 @@ class LocationTrackingService : Service() {
     }
 
     private fun resumeTracking() {
+        if (lastValidLocation == null) {
+            GpsTrackerStore.state.value.routePoints.lastOrNull()?.let { pt ->
+                lastValidLocation = Location("restored").apply {
+                    latitude = pt.lat
+                    longitude = pt.lng
+                    time = pt.timestampMs
+                }
+            }
+        }
         GpsTrackerStore.update { it.copy(status = TrackingStatus.ACTIVE) }
+        startForegroundWithNotification()
         requestLocationUpdates()
         startElapsedTimer()
         updateNotification()
@@ -298,7 +400,7 @@ class LocationTrackingService : Service() {
 
         fun discardSession(context: Context) {
             sendCommand(context, ACTION_STOP)
-            GpsTrackerStore.reset()
+            GpsTrackerStore.reset(context)
         }
     }
 }

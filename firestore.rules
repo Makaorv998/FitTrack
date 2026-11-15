@@ -50,6 +50,8 @@ service cloud.firestore {
         data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 80 &&
         (!('email' in data) || (data.email is string && data.email.size() <= 150)) &&
         (!('photoUrl' in data) || (data.photoUrl is string && data.photoUrl.size() <= 500)) &&
+        (!('dateOfBirthIso' in data) || (data.dateOfBirthIso is string && data.dateOfBirthIso.size() <= 16)) &&
+        (!('reducedMotionEnabled' in data) || data.reducedMotionEnabled is bool) &&
         data.ageYears is int && data.ageYears >= 13 && data.ageYears <= 120 &&
         data.sex in ['male', 'female', 'other'] &&
         data.heightCm is number && data.heightCm >= 80 && data.heightCm <= 260 &&
@@ -103,6 +105,7 @@ service cloud.firestore {
         data.fatPer100g is number && data.fatPer100g >= 0 && data.fatPer100g <= 100 &&
         data.fiberPer100g is number && data.fiberPer100g >= 0 && data.fiberPer100g <= 100 &&
         data.sugarPer100g is number && data.sugarPer100g >= 0 && data.sugarPer100g <= 100 &&
+        (!('measurementUnit' in data) || data.measurementUnit in ['g', 'ml']) &&
         data.isFavorite is bool &&
         data.isCustom is bool;
     }
@@ -113,13 +116,14 @@ service cloud.firestore {
         data.mealType in ['breakfast', 'lunch', 'dinner', 'snack'] &&
         data.foodName is string && data.foodName.size() >= 1 && data.foodName.size() <= 120 &&
         data.grams is number && data.grams >= 1 && data.grams <= 5000 &&
+        (!('measurementUnit' in data) || data.measurementUnit in ['g', 'ml']) &&
         data.calories is number && data.calories >= 0 && data.calories <= 10000 &&
         data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000 &&
         data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1000 &&
         data.fatG is number && data.fatG >= 0 && data.fatG <= 1000 &&
         data.fiberG is number && data.fiberG >= 0 && data.fiberG <= 500 &&
         data.sugarG is number && data.sugarG >= 0 && data.sugarG <= 500 &&
-        data.source in ['manual', 'ai_scan', 'ai_plan'];
+        data.source in ['manual', 'ai_scan', 'ai_plan', 'recipe', 'meal_plan'];
     }
 
     function isValidWaterLog(data, userId) {
@@ -248,6 +252,48 @@ service cloud.firestore {
         data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16;
     }
 
+    function isValidGoalHistoryEntry(data, userId) {
+      return data.userId == userId &&
+        data.goalType in ['weight_loss', 'muscle_gain', 'general_fitness', 'weight_maintenance', 'endurance', 'strength'] &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 100 &&
+        data.status in ['active', 'paused', 'completed', 'archived'] &&
+        data.targetValue is number && data.targetValue >= 0 && data.targetValue <= 1000000 &&
+        data.currentValue is number && data.currentValue >= 0 && data.currentValue <= 1000000 &&
+        data.unit is string && data.unit.size() >= 1 && data.unit.size() <= 30 &&
+        data.targetDateKey is string && data.targetDateKey.size() <= 16 &&
+        (!('completedDateKey' in data) || (data.completedDateKey is string && data.completedDateKey.size() <= 16)) &&
+        data.notes is string && data.notes.size() <= 300;
+    }
+
+    function isValidSavedRecipe(data, userId) {
+      return data.userId == userId &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.servings is int && data.servings >= 1 && data.servings <= 100 &&
+        data.notes is string && data.notes.size() <= 400 &&
+        data.ingredients is list && data.ingredients.size() <= 40 &&
+        (!('measurementUnit' in data) || data.measurementUnit in ['g', 'ml']);
+    }
+
+    function isValidPlannedMeal(data, userId) {
+      return data.userId == userId &&
+        data.dayOfWeek in ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'] &&
+        data.mealType in ['breakfast', 'lunch', 'dinner', 'snack'] &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.grams is number && data.grams >= 1 && data.grams <= 5000 &&
+        data.calories is number && data.calories >= 0 && data.calories <= 10000 &&
+        data.proteinG is number && data.proteinG >= 0 && data.proteinG <= 1000 &&
+        data.carbsG is number && data.carbsG >= 0 && data.carbsG <= 1000 &&
+        data.fatG is number && data.fatG >= 0 && data.fatG <= 1000 &&
+        (!('measurementUnit' in data) || data.measurementUnit in ['g', 'ml']);
+    }
+
+    function isValidUserSyncPreference(data, userId, prefId) {
+      return data.userId == userId &&
+        prefId in ['training', 'nutrition', 'notifications'] &&
+        data.prefType == prefId &&
+        data.payloadJson is string && data.payloadJson.size() <= 16000;
+    }
+
     function isValidChangelogList(listVal) {
       return listVal is list &&
         listVal.size() <= 25 &&
@@ -303,10 +349,10 @@ service cloud.firestore {
           'sensorConsentGranted', 'locationConsentGranted', 'createdAt', 'updatedAt'
         ]) &&
         incoming().keys().hasOnly([
-          'userId', 'displayName', 'email', 'photoUrl', 'ageYears', 'sex',
-          'heightCm', 'weightKg', 'targetWeightKg', 'activityLevel', 'goal',
+          'userId', 'displayName', 'email', 'photoUrl', 'ageYears', 'dateOfBirthIso',
+          'sex', 'heightCm', 'weightKg', 'targetWeightKg', 'activityLevel', 'goal',
           'dailyStepGoal', 'dailyWaterTargetMl', 'dailyCalorieTarget',
-          'onboardingCompleted', 'unitSystem', 'themePreference',
+          'onboardingCompleted', 'unitSystem', 'themePreference', 'reducedMotionEnabled',
           'sensorConsentGranted', 'locationConsentGranted', 'createdAt', 'updatedAt'
         ]) &&
         isValidTimestamp(incoming().createdAt) &&
@@ -320,11 +366,11 @@ service cloud.firestore {
         incoming().createdAt == existing().createdAt &&
         isValidTimestamp(incoming().updatedAt) &&
         incoming().diff(existing()).affectedKeys().hasOnly([
-          'displayName', 'email', 'photoUrl', 'ageYears', 'sex', 'heightCm',
-          'weightKg', 'targetWeightKg', 'activityLevel', 'goal', 'dailyStepGoal',
-          'dailyWaterTargetMl', 'dailyCalorieTarget', 'onboardingCompleted',
-          'unitSystem', 'themePreference', 'sensorConsentGranted',
-          'locationConsentGranted', 'updatedAt'
+          'displayName', 'email', 'photoUrl', 'ageYears', 'dateOfBirthIso',
+          'sex', 'heightCm', 'weightKg', 'targetWeightKg', 'activityLevel', 'goal',
+          'dailyStepGoal', 'dailyWaterTargetMl', 'dailyCalorieTarget',
+          'onboardingCompleted', 'unitSystem', 'themePreference', 'reducedMotionEnabled',
+          'sensorConsentGranted', 'locationConsentGranted', 'updatedAt'
         ]);
 
       allow delete: if isOwner(userId) && isValidId(userId);
@@ -371,7 +417,7 @@ service cloud.firestore {
         allow list: if isOwner(userId);
         allow create: if isOwner(userId) && isValidId(foodId) &&
           incoming().keys().hasAll(['userId', 'name', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'isCustom', 'createdAt', 'updatedAt']) &&
-          incoming().keys().hasOnly(['userId', 'name', 'brand', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'isCustom', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'name', 'brand', 'servingSizeGrams', 'servingLabel', 'measurementUnit', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'isCustom', 'createdAt', 'updatedAt']) &&
           isValidTimestamp(incoming().createdAt) &&
           isValidTimestamp(incoming().updatedAt) &&
           isValidFoodItem(incoming(), userId);
@@ -380,7 +426,7 @@ service cloud.firestore {
           incoming().userId == existing().userId &&
           incoming().createdAt == existing().createdAt &&
           isValidTimestamp(incoming().updatedAt) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brand', 'servingSizeGrams', 'servingLabel', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'brand', 'servingSizeGrams', 'servingLabel', 'measurementUnit', 'caloriesPer100g', 'proteinPer100g', 'carbsPer100g', 'fatPer100g', 'fiberPer100g', 'sugarPer100g', 'isFavorite', 'updatedAt']);
         allow delete: if isOwner(userId) && isValidId(foodId);
       }
 
@@ -389,7 +435,7 @@ service cloud.firestore {
         allow list: if isOwner(userId);
         allow create: if isOwner(userId) && isValidId(mealId) &&
           incoming().keys().hasAll(['userId', 'dateKey', 'mealType', 'foodName', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'source', 'createdAt', 'updatedAt']) &&
-          incoming().keys().hasOnly(['userId', 'dateKey', 'mealType', 'foodName', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'source', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dateKey', 'mealType', 'foodName', 'grams', 'measurementUnit', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'source', 'createdAt', 'updatedAt']) &&
           isValidTimestamp(incoming().createdAt) &&
           isValidTimestamp(incoming().updatedAt) &&
           isValidMealLog(incoming(), userId);
@@ -398,7 +444,7 @@ service cloud.firestore {
           incoming().userId == existing().userId &&
           incoming().createdAt == existing().createdAt &&
           isValidTimestamp(incoming().updatedAt) &&
-          incoming().diff(existing()).affectedKeys().hasOnly(['mealType', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'updatedAt']);
+          incoming().diff(existing()).affectedKeys().hasOnly(['mealType', 'grams', 'measurementUnit', 'calories', 'proteinG', 'carbsG', 'fatG', 'fiberG', 'sugarG', 'updatedAt']);
         allow delete: if isOwner(userId) && isValidId(mealId);
       }
 
@@ -491,6 +537,8 @@ service cloud.firestore {
         allow update: if isOwner(userId) && isValidId(recordId) &&
           isValidPersonalRecord(incoming(), userId) &&
           incoming().userId == existing().userId &&
+          incoming().keys().hasAll(['userId', 'exerciseId', 'exerciseName', 'primaryMuscle', 'weightKg', 'reps', 'estimatedOneRmKg', 'setVolumeKg', 'dateKey', 'sessionId', 'createdAt']) &&
+          incoming().keys().hasOnly(['userId', 'exerciseId', 'exerciseName', 'primaryMuscle', 'weightKg', 'reps', 'estimatedOneRmKg', 'setVolumeKg', 'dateKey', 'sessionId', 'createdAt']) &&
           isValidTimestamp(incoming().createdAt);
         allow delete: if isOwner(userId) && isValidId(recordId);
       }
@@ -577,6 +625,77 @@ service cloud.firestore {
           isValidProgressPhotoNote(incoming(), userId);
         allow update: if false;
         allow delete: if isOwner(userId) && isValidId(photoId);
+      }
+
+      match /goal_history/{goalId} {
+        allow get: if isOwner(userId) && isValidId(goalId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(goalId) &&
+          incoming().keys().hasAll(['userId', 'goalType', 'title', 'status', 'targetValue', 'currentValue', 'unit', 'targetDateKey', 'notes', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'goalType', 'title', 'status', 'targetValue', 'currentValue', 'unit', 'targetDateKey', 'completedDateKey', 'notes', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidGoalHistoryEntry(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(goalId) &&
+          isValidGoalHistoryEntry(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['title', 'status', 'targetValue', 'currentValue', 'unit', 'targetDateKey', 'completedDateKey', 'notes', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(goalId);
+      }
+
+      match /recipes/{recipeId} {
+        allow get: if isOwner(userId) && isValidId(recipeId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(recipeId) &&
+          incoming().keys().hasAll(['userId', 'name', 'servings', 'notes', 'ingredients', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'name', 'servings', 'notes', 'measurementUnit', 'ingredients', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidSavedRecipe(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(recipeId) &&
+          isValidSavedRecipe(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'servings', 'notes', 'measurementUnit', 'ingredients', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(recipeId);
+      }
+
+      match /planned_meals/{entryId} {
+        allow get: if isOwner(userId) && isValidId(entryId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(entryId) &&
+          incoming().keys().hasAll(['userId', 'dayOfWeek', 'mealType', 'title', 'grams', 'calories', 'proteinG', 'carbsG', 'fatG', 'createdAt', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'dayOfWeek', 'mealType', 'title', 'grams', 'measurementUnit', 'calories', 'proteinG', 'carbsG', 'fatG', 'createdAt', 'updatedAt']) &&
+          isValidTimestamp(incoming().createdAt) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidPlannedMeal(incoming(), userId);
+        allow update: if isOwner(userId) && isValidId(entryId) &&
+          isValidPlannedMeal(incoming(), userId) &&
+          incoming().userId == existing().userId &&
+          incoming().createdAt == existing().createdAt &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['dayOfWeek', 'mealType', 'title', 'grams', 'measurementUnit', 'calories', 'proteinG', 'carbsG', 'fatG', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(entryId);
+      }
+
+      match /preferences/{prefId} {
+        allow get: if isOwner(userId) && isValidId(prefId);
+        allow list: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(prefId) &&
+          incoming().keys().hasAll(['userId', 'prefType', 'payloadJson', 'updatedAt']) &&
+          incoming().keys().hasOnly(['userId', 'prefType', 'payloadJson', 'updatedAt']) &&
+          isValidTimestamp(incoming().updatedAt) &&
+          isValidUserSyncPreference(incoming(), userId, prefId);
+        allow update: if isOwner(userId) && isValidId(prefId) &&
+          isValidUserSyncPreference(incoming(), userId, prefId) &&
+          incoming().userId == existing().userId &&
+          incoming().prefType == existing().prefType &&
+          isValidTimestamp(incoming().updatedAt) &&
+          incoming().diff(existing()).affectedKeys().hasOnly(['payloadJson', 'updatedAt']);
+        allow delete: if isOwner(userId) && isValidId(prefId);
       }
     }
 

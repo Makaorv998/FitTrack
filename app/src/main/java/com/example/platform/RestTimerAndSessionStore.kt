@@ -173,6 +173,15 @@ class RestTimerAndSessionStore(private val context: Context) {
         }
     }
 
+    suspend fun clearAllForUser(uid: String) {
+        context.workoutDataStore.edit { prefs ->
+            prefs.remove(activeKey(uid))
+            prefs.remove(settingsKey(uid))
+            prefs.remove(pendingQueueKey(uid))
+        }
+        cancelRestAlarm()
+    }
+
     fun scheduleRestAlarm(
         triggerAtEpochMs: Long,
         exerciseName: String,

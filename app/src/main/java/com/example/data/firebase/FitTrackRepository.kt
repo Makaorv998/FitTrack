@@ -5,7 +5,9 @@ import com.example.R
 import com.example.data.model.AiChatMessage
 import com.example.data.model.BodyMeasurement
 import com.example.data.model.FoodItem
+import com.example.data.model.GoalHistoryEntry
 import com.example.data.model.GpsActivity
+import com.example.data.model.LatLngPoint
 import com.example.data.model.MealLog
 import com.example.data.model.PersonalRecord
 import com.example.data.model.ProgressPhotoNote
@@ -20,6 +22,9 @@ import com.example.data.model.WorkoutPlan
 import com.example.data.model.WorkoutProgram
 import com.example.data.model.WorkoutScheduleItem
 import com.example.data.model.WorkoutSessionLog
+import com.example.platform.PlannedMealEntry
+import com.example.platform.RecipeIngredient
+import com.example.platform.SavedRecipe
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.DocumentSnapshot
@@ -139,6 +144,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
                     "email" to profile.email.take(150),
                     "photoUrl" to profile.photoUrl.take(500),
                     "ageYears" to profile.ageYears.coerceIn(13L, 120L),
+                    "dateOfBirthIso" to profile.dateOfBirthIso.take(16),
                     "sex" to profile.sex,
                     "heightCm" to profile.heightCm.coerceIn(80.0, 260.0),
                     "weightKg" to profile.weightKg.coerceIn(20.0, 400.0),
@@ -151,6 +157,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
                     "onboardingCompleted" to profile.onboardingCompleted,
                     "unitSystem" to profile.unitSystem,
                     "themePreference" to profile.themePreference,
+                    "reducedMotionEnabled" to profile.reducedMotionEnabled,
                     "sensorConsentGranted" to profile.sensorConsentGranted,
                     "locationConsentGranted" to profile.locationConsentGranted,
                     "createdAt" to FieldValue.serverTimestamp(),
@@ -178,6 +185,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
             "email" to profile.email.take(150),
             "photoUrl" to profile.photoUrl.take(500),
             "ageYears" to profile.ageYears.coerceIn(13L, 120L),
+            "dateOfBirthIso" to profile.dateOfBirthIso.take(16),
             "sex" to profile.sex,
             "heightCm" to profile.heightCm.coerceIn(80.0, 260.0),
             "weightKg" to profile.weightKg.coerceIn(20.0, 400.0),
@@ -190,6 +198,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
             "onboardingCompleted" to profile.onboardingCompleted,
             "unitSystem" to profile.unitSystem,
             "themePreference" to profile.themePreference,
+            "reducedMotionEnabled" to profile.reducedMotionEnabled,
             "sensorConsentGranted" to profile.sensorConsentGranted,
             "locationConsentGranted" to profile.locationConsentGranted,
             "updatedAt" to FieldValue.serverTimestamp()
@@ -253,7 +262,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
     suspend fun saveGpsActivity(activity: GpsActivity): String {
         val uid = requireUserId()
         val ref = userDoc(uid).collection("gps_activities").document()
-        val sampledPoints = activity.routePoints.take(250).map {
+        val sampledPoints = downsampleRoutePoints(activity.routePoints, 250).map {
             mapOf("lat" to it.lat, "lng" to it.lng, "timestampMs" to it.timestampMs)
         }
         val payload = mapOf(
@@ -310,7 +319,8 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
             "name" to food.name.take(100).ifBlank { "Custom Food" },
             "brand" to food.brand.take(100),
             "servingSizeGrams" to food.servingSizeGrams.coerceIn(1.0, 5000.0),
-            "servingLabel" to food.servingLabel.take(50).ifBlank { "100g" },
+            "servingLabel" to food.servingLabel.take(50).ifBlank { "100${food.measurementUnit}" },
+            "measurementUnit" to if (food.measurementUnit == "ml") "ml" else "g",
             "caloriesPer100g" to food.caloriesPer100g.coerceIn(0.0, 1500.0),
             "proteinPer100g" to food.proteinPer100g.coerceIn(0.0, 100.0),
             "carbsPer100g" to food.carbsPer100g.coerceIn(0.0, 100.0),
@@ -364,6 +374,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
             "mealType" to meal.mealType,
             "foodName" to meal.foodName.take(120).ifBlank { "Food" },
             "grams" to meal.grams.coerceIn(1.0, 5000.0),
+            "measurementUnit" to if (meal.measurementUnit == "ml") "ml" else "g",
             "calories" to meal.calories.coerceIn(0.0, 10000.0),
             "proteinG" to meal.proteinG.coerceIn(0.0, 1000.0),
             "carbsG" to meal.carbsG.coerceIn(0.0, 1000.0),
@@ -394,6 +405,7 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
                 mapOf(
                     "mealType" to meal.mealType,
                     "grams" to meal.grams.coerceIn(1.0, 5000.0),
+                    "measurementUnit" to if (meal.measurementUnit == "ml") "ml" else "g",
                     "calories" to meal.calories.coerceIn(0.0, 10000.0),
                     "proteinG" to meal.proteinG.coerceIn(0.0, 1000.0),
                     "carbsG" to meal.carbsG.coerceIn(0.0, 1000.0),
@@ -983,19 +995,362 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
         }
     }
 
+    suspend fun clearAiMessages() {
+        val uid = requireUserId()
+        val col = userDoc(uid).collection("ai_messages")
+        try {
+            val snaps = col.get().await()
+            if (snaps.isEmpty) return
+            snaps.documents.chunked(400).forEach { batchDocs ->
+                val batch = db.batch()
+                batchDocs.forEach { batch.delete(it.reference) }
+                batch.commit().await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, "users/$uid/ai_messages")
+            throw e
+        }
+    }
+
+    fun observeGoalHistory(uid: String): Flow<List<GoalHistoryEntry>> =
+        observeCollection(uid, "goal_history", GoalHistoryEntry::class.java, "createdAt", true)
+
+    suspend fun saveGoalHistoryEntry(entry: GoalHistoryEntry): String {
+        val uid = requireUserId()
+        val ref = if (entry.id.isNotBlank()) {
+            userDoc(uid).collection("goal_history").document(entry.id)
+        } else {
+            userDoc(uid).collection("goal_history").document()
+        }
+        return try {
+            if (entry.id.isNotBlank() && ref.get().await().exists()) {
+                ref.update(
+                    mapOf(
+                        "title" to entry.title.take(100).ifBlank { "Fitness Goal" },
+                        "status" to entry.status,
+                        "targetValue" to entry.targetValue.coerceIn(0.0, 1_000_000.0),
+                        "currentValue" to entry.currentValue.coerceIn(0.0, 1_000_000.0),
+                        "unit" to entry.unit.take(30).ifBlank { "units" },
+                        "targetDateKey" to entry.targetDateKey.take(16),
+                        "completedDateKey" to entry.completedDateKey.take(16),
+                        "notes" to entry.notes.take(300),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "userId" to uid,
+                        "goalType" to entry.goalType,
+                        "title" to entry.title.take(100).ifBlank { "Fitness Goal" },
+                        "status" to entry.status,
+                        "targetValue" to entry.targetValue.coerceIn(0.0, 1_000_000.0),
+                        "currentValue" to entry.currentValue.coerceIn(0.0, 1_000_000.0),
+                        "unit" to entry.unit.take(30).ifBlank { "units" },
+                        "targetDateKey" to entry.targetDateKey.take(16),
+                        "completedDateKey" to entry.completedDateKey.take(16),
+                        "notes" to entry.notes.take(300),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            ref.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            throw e
+        }
+    }
+
+    suspend fun deleteGoalHistoryEntry(goalId: String) {
+        val uid = requireUserId()
+        val ref = userDoc(uid).collection("goal_history").document(goalId)
+        try {
+            ref.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
+            throw e
+        }
+    }
+
+    fun observeRecipes(uid: String): Flow<List<SavedRecipe>> = flow {
+        val path = "users/$uid/recipes"
+        emitAll(
+            userDoc(uid).collection("recipes")
+                .orderBy("createdAt", Query.Direction.DESCENDING)
+                .snapshots()
+                .map { snap ->
+                    snap.documents.map { doc ->
+                        @Suppress("UNCHECKED_CAST")
+                        val rawIngredients = (doc.get("ingredients") as? List<Map<String, Any?>>).orEmpty()
+                        val ingredients = rawIngredients.map { m ->
+                            RecipeIngredient(
+                                foodName = (m["foodName"] as? String).orEmpty(),
+                                grams = (m["grams"] as? Number)?.toDouble() ?: 100.0,
+                                measurementUnit = (m["measurementUnit"] as? String) ?: "g",
+                                calories = (m["calories"] as? Number)?.toDouble() ?: 0.0,
+                                proteinG = (m["proteinG"] as? Number)?.toDouble() ?: 0.0,
+                                carbsG = (m["carbsG"] as? Number)?.toDouble() ?: 0.0,
+                                fatG = (m["fatG"] as? Number)?.toDouble() ?: 0.0,
+                                fiberG = (m["fiberG"] as? Number)?.toDouble() ?: 0.0,
+                                sugarG = (m["sugarG"] as? Number)?.toDouble() ?: 0.0
+                            )
+                        }
+                        SavedRecipe(
+                            id = doc.id,
+                            name = doc.getString("name").orEmpty(),
+                            servings = (doc.getLong("servings") ?: 1L).toInt().coerceAtLeast(1),
+                            notes = doc.getString("notes").orEmpty(),
+                            measurementUnit = doc.getString("measurementUnit") ?: "g",
+                            ingredients = ingredients,
+                            createdAtMs = doc.getTimestamp("createdAt")?.toDate()?.time ?: System.currentTimeMillis()
+                        )
+                    }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    val exceptionToLog = firestoreError ?: (error as? Exception)
+                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
+    suspend fun saveRecipe(recipe: SavedRecipe): String {
+        val uid = requireUserId()
+        val ref = if (recipe.id.isNotBlank()) {
+            userDoc(uid).collection("recipes").document(recipe.id)
+        } else {
+            userDoc(uid).collection("recipes").document()
+        }
+        val ingPayload = recipe.ingredients.take(40).map { ing ->
+            mapOf(
+                "foodName" to ing.foodName.take(100),
+                "grams" to ing.grams.coerceIn(1.0, 5000.0),
+                "measurementUnit" to if (ing.measurementUnit == "ml") "ml" else "g",
+                "calories" to ing.calories.coerceIn(0.0, 10000.0),
+                "proteinG" to ing.proteinG.coerceIn(0.0, 1000.0),
+                "carbsG" to ing.carbsG.coerceIn(0.0, 1000.0),
+                "fatG" to ing.fatG.coerceIn(0.0, 1000.0),
+                "fiberG" to ing.fiberG.coerceIn(0.0, 500.0),
+                "sugarG" to ing.sugarG.coerceIn(0.0, 500.0)
+            )
+        }
+        return try {
+            if (recipe.id.isNotBlank() && ref.get().await().exists()) {
+                ref.update(
+                    mapOf(
+                        "name" to recipe.name.take(120).ifBlank { "Custom Recipe" },
+                        "servings" to recipe.servings.coerceIn(1, 100),
+                        "notes" to recipe.notes.take(400),
+                        "measurementUnit" to if (recipe.measurementUnit == "ml") "ml" else "g",
+                        "ingredients" to ingPayload,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "userId" to uid,
+                        "name" to recipe.name.take(120).ifBlank { "Custom Recipe" },
+                        "servings" to recipe.servings.coerceIn(1, 100),
+                        "notes" to recipe.notes.take(400),
+                        "measurementUnit" to if (recipe.measurementUnit == "ml") "ml" else "g",
+                        "ingredients" to ingPayload,
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            ref.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            throw e
+        }
+    }
+
+    suspend fun deleteRecipe(recipeId: String) {
+        val uid = requireUserId()
+        val ref = userDoc(uid).collection("recipes").document(recipeId)
+        try {
+            ref.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
+            throw e
+        }
+    }
+
+    fun observePlannedMeals(uid: String): Flow<List<PlannedMealEntry>> = flow {
+        val path = "users/$uid/planned_meals"
+        emitAll(
+            userDoc(uid).collection("planned_meals")
+                .orderBy("createdAt", Query.Direction.ASCENDING)
+                .snapshots()
+                .map { snap ->
+                    snap.documents.map { doc ->
+                        PlannedMealEntry(
+                            id = doc.id,
+                            dayOfWeek = doc.getString("dayOfWeek") ?: "Monday",
+                            mealType = doc.getString("mealType") ?: "breakfast",
+                            title = doc.getString("title").orEmpty(),
+                            grams = doc.getDouble("grams") ?: 250.0,
+                            measurementUnit = doc.getString("measurementUnit") ?: "g",
+                            calories = doc.getDouble("calories") ?: 0.0,
+                            proteinG = doc.getDouble("proteinG") ?: 0.0,
+                            carbsG = doc.getDouble("carbsG") ?: 0.0,
+                            fatG = doc.getDouble("fatG") ?: 0.0
+                        )
+                    }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    val exceptionToLog = firestoreError ?: (error as? Exception)
+                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+                        handleFirestoreError(exceptionToLog, OperationType.LIST, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
+    suspend fun savePlannedMeal(entry: PlannedMealEntry): String {
+        val uid = requireUserId()
+        val ref = if (entry.id.isNotBlank()) {
+            userDoc(uid).collection("planned_meals").document(entry.id)
+        } else {
+            userDoc(uid).collection("planned_meals").document()
+        }
+        return try {
+            if (entry.id.isNotBlank() && ref.get().await().exists()) {
+                ref.update(
+                    mapOf(
+                        "dayOfWeek" to entry.dayOfWeek,
+                        "mealType" to entry.mealType,
+                        "title" to entry.title.take(120).ifBlank { "Planned Meal" },
+                        "grams" to entry.grams.coerceIn(1.0, 5000.0),
+                        "measurementUnit" to if (entry.measurementUnit == "ml") "ml" else "g",
+                        "calories" to entry.calories.coerceIn(0.0, 10000.0),
+                        "proteinG" to entry.proteinG.coerceIn(0.0, 1000.0),
+                        "carbsG" to entry.carbsG.coerceIn(0.0, 1000.0),
+                        "fatG" to entry.fatG.coerceIn(0.0, 1000.0),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "userId" to uid,
+                        "dayOfWeek" to entry.dayOfWeek,
+                        "mealType" to entry.mealType,
+                        "title" to entry.title.take(120).ifBlank { "Planned Meal" },
+                        "grams" to entry.grams.coerceIn(1.0, 5000.0),
+                        "measurementUnit" to if (entry.measurementUnit == "ml") "ml" else "g",
+                        "calories" to entry.calories.coerceIn(0.0, 10000.0),
+                        "proteinG" to entry.proteinG.coerceIn(0.0, 1000.0),
+                        "carbsG" to entry.carbsG.coerceIn(0.0, 1000.0),
+                        "fatG" to entry.fatG.coerceIn(0.0, 1000.0),
+                        "createdAt" to FieldValue.serverTimestamp(),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+            ref.id
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            throw e
+        }
+    }
+
+    suspend fun deletePlannedMeal(entryId: String) {
+        val uid = requireUserId()
+        val ref = userDoc(uid).collection("planned_meals").document(entryId)
+        try {
+            ref.delete().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, ref.path)
+            throw e
+        }
+    }
+
+    fun observeSyncPreference(uid: String, prefType: String): Flow<String?> = flow {
+        val path = "users/$uid/preferences/$prefType"
+        emitAll(
+            userDoc(uid).collection("preferences").document(prefType)
+                .snapshots()
+                .map { snap -> snap.getString("payloadJson") }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    val exceptionToLog = firestoreError ?: (error as? Exception)
+                    if (exceptionToLog != null && auth.currentUser?.uid == uid) {
+                        handleFirestoreError(exceptionToLog, OperationType.GET, path)
+                    }
+                    throw error
+                }
+        )
+    }
+
+    suspend fun saveSyncPreference(prefType: String, payloadJson: String) {
+        val uid = requireUserId()
+        val ref = userDoc(uid).collection("preferences").document(prefType)
+        try {
+            val snap = ref.get().await()
+            if (snap.exists()) {
+                ref.update(
+                    mapOf(
+                        "payloadJson" to payloadJson.take(16000),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            } else {
+                ref.set(
+                    mapOf(
+                        "userId" to uid,
+                        "prefType" to prefType,
+                        "payloadJson" to payloadJson.take(16000),
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.WRITE, ref.path)
+            throw e
+        }
+    }
+
     suspend fun exportAllUserDataJson(): String {
         val uid = requireUserId()
         val root = JSONObject()
         try {
             val profileSnap = userDoc(uid).get().await()
             root.put("userProfile", JSONObject(profileSnap.data ?: emptyMap<String, Any>()))
-            val subcollections = listOf(
-                "step_records", "gps_activities", "custom_foods", "meals",
-                "water_logs", "workouts", "workout_sessions", "workout_programs",
-                "workout_schedules", "personal_records", "training_notes", "weight_records",
-                "body_measurements", "challenges", "ai_messages", "progress_photos"
-            )
-            for (sub in subcollections) {
+            for (sub in ALL_USER_SUBCOLLECTIONS) {
                 val snaps = userDoc(uid).collection(sub).get().await()
                 val arr = JSONArray()
                 for (doc in snaps.documents) {
@@ -1014,17 +1369,13 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
 
     suspend fun deleteAllUserData() {
         val uid = requireUserId()
-        val subcollections = listOf(
-            "step_records", "gps_activities", "custom_foods", "meals",
-            "water_logs", "workouts", "workout_sessions", "workout_programs",
-            "workout_schedules", "personal_records", "training_notes", "weight_records",
-            "body_measurements", "challenges", "ai_messages", "progress_photos"
-        )
         try {
-            for (sub in subcollections) {
+            for (sub in ALL_USER_SUBCOLLECTIONS) {
                 val snaps = userDoc(uid).collection(sub).get().await()
-                for (doc in snaps.documents) {
-                    doc.reference.delete().await()
+                snaps.documents.chunked(400).forEach { batchDocs ->
+                    val batch = db.batch()
+                    batchDocs.forEach { batch.delete(it.reference) }
+                    batch.commit().await()
                 }
             }
             userDoc(uid).delete().await()
@@ -1033,6 +1384,29 @@ class FitTrackRepository(private val db: FirebaseFirestore) {
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.DELETE, "users/$uid")
             throw e
+        }
+    }
+
+    companion object {
+        val ALL_USER_SUBCOLLECTIONS = listOf(
+            "step_records", "gps_activities", "custom_foods", "meals",
+            "water_logs", "workouts", "workout_sessions", "workout_programs",
+            "workout_schedules", "personal_records", "training_notes", "weight_records",
+            "body_measurements", "challenges", "ai_messages", "progress_photos",
+            "goal_history", "recipes", "planned_meals", "preferences"
+        )
+
+        fun downsampleRoutePoints(points: List<LatLngPoint>, maxPoints: Int = 250): List<LatLngPoint> {
+            if (points.size <= maxPoints || maxPoints < 2) return points
+            val sampled = ArrayList<LatLngPoint>(maxPoints)
+            val lastIndex = points.lastIndex
+            val step = lastIndex.toDouble() / (maxPoints - 1).toDouble()
+            for (i in 0 until maxPoints - 1) {
+                val idx = (i * step).toInt().coerceIn(0, lastIndex)
+                sampled.add(points[idx])
+            }
+            sampled.add(points[lastIndex])
+            return sampled
         }
     }
 }

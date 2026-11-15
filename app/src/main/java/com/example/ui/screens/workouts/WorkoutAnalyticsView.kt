@@ -36,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.PersonalRecord
 import com.example.data.model.WorkoutSessionLog
+import com.example.domain.UnitFormatter
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.domain.WorkoutDashboardMetrics
 import com.example.ui.AsyncState
@@ -61,6 +62,7 @@ fun WorkoutAnalyticsView(
     metrics: WorkoutDashboardMetrics,
     sessions: List<WorkoutSessionLog>,
     personalRecords: List<PersonalRecord>,
+    unitSystem: String = "metric",
     aiWorkoutAnalysisState: AsyncState<String>,
     onRequestAiAnalysis: () -> Unit
 ) {
@@ -119,10 +121,10 @@ fun WorkoutAnalyticsView(
         // Weekly / Monthly Working Volume Chart
         item {
             FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                SectionHeader(title = "Working Volume Trend (kg)")
+                SectionHeader(title = "Working Volume Trend (${UnitFormatter.weightUnitLabel(unitSystem)})")
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "Working: ${metrics.totalWorkingVolumeKg.toInt()} kg • Warm-up excluded: ${totalWarmupVol.toInt()} kg",
+                    text = "Working: ${WorkoutAnalyticsEngine.formatVolume(metrics.totalWorkingVolumeKg, unitSystem)} • Warm-up excluded: ${WorkoutAnalyticsEngine.formatVolume(totalWarmupVol, unitSystem)}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.secondary
                 )
@@ -133,7 +135,8 @@ fun WorkoutAnalyticsView(
                     onSelect = { volumePeriodTab = it }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
-                val chartData = if (volumePeriodTab == 0) metrics.weeklyVolumeBars else metrics.monthlyVolumeBars
+                val chartData = (if (volumePeriodTab == 0) metrics.weeklyVolumeBars else metrics.monthlyVolumeBars)
+                    .map { (lbl, kg) -> lbl to UnitFormatter.kgToDisplayWeight(kg.toDouble(), unitSystem).toFloat() }
                 if (chartData.isEmpty()) {
                     EmptyStateCard(
                         icon = Icons.Filled.FitnessCenter,
@@ -176,7 +179,9 @@ fun WorkoutAnalyticsView(
                     Spacer(modifier = Modifier.height(10.dp))
                     if (selectedSeries.isNotEmpty()) {
                         TrendLineChart(
-                            points = selectedSeries.map { it.dateKey.takeLast(5) to it.estimatedOneRmKg.toFloat() },
+                            points = selectedSeries.map {
+                                it.dateKey.takeLast(5) to UnitFormatter.kgToDisplayWeight(it.estimatedOneRmKg, unitSystem).toFloat()
+                            },
                             lineColor = MaterialTheme.colorScheme.secondary
                         )
                     }
@@ -234,13 +239,17 @@ fun WorkoutAnalyticsView(
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text(
-                                text = "${WorkoutAnalyticsEngine.formatWeight(pr.weightKg)} × ${pr.reps}",
+                                text = "${WorkoutAnalyticsEngine.formatWeight(pr.weightKg, unitSystem)} × ${pr.reps}",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = ext.success,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Est 1RM ${String.format(Locale.US, "%.1f", pr.estimatedOneRmKg)} kg",
+                                text = if (pr.weightKg <= 0.0) {
+                                    "Bodyweight PR"
+                                } else {
+                                    "Est 1RM ${WorkoutAnalyticsEngine.formatWeight(pr.estimatedOneRmKg, unitSystem)}"
+                                },
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.secondary
                             )

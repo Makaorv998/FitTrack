@@ -57,6 +57,7 @@ import com.example.data.model.UserProfile
 import com.example.data.model.WeightRecord
 import com.example.data.model.WorkoutSessionLog
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.ui.branding.FitTrackIllustrationType
 import com.example.ui.components.AuroraAmbientBackground
 import com.example.ui.components.DisclaimerBanner
@@ -107,8 +108,12 @@ fun BodyProgressScreen(
     onBack: () -> Unit
 ) {
     val ext = LocalFitTrackColors.current
-    var weightInput by remember(profile?.weightKg) {
-        mutableStateOf((profile?.weightKg ?: 72.0).toString())
+    val unitSystem = profile?.unitSystem ?: "metric"
+    val weightUnit = UnitFormatter.weightUnitLabel(unitSystem)
+    val lengthUnit = UnitFormatter.heightInputLabel(unitSystem)
+    var weightInput by remember(profile?.weightKg, unitSystem) {
+        val displayW = UnitFormatter.kgToDisplayWeight(profile?.weightKg ?: 72.0, unitSystem)
+        mutableStateOf(String.format(Locale.US, "%.1f", displayW))
     }
     var weightNote by remember { mutableStateOf("") }
 
@@ -204,13 +209,13 @@ fun BodyProgressScreen(
                         ) {
                             Text("Weight Tracker", style = MaterialTheme.typography.titleLarge)
                             StatusBadge(
-                                text = "Goal ${String.format(Locale.US, "%.1f", profile?.targetWeightKg ?: 70.0)} kg • BMI ${bmi.primaryValue}",
+                                text = "Goal ${UnitFormatter.formatWeight(profile?.targetWeightKg ?: 70.0, unitSystem)} • BMI ${bmi.primaryValue}",
                                 tint = MaterialTheme.colorScheme.secondary
                             )
                         }
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(
-                            text = String.format(Locale.US, "%.1f kg", profile?.weightKg ?: 72.0),
+                            text = UnitFormatter.formatWeight(profile?.weightKg ?: 72.0, unitSystem),
                             style = MetricNumberTextStyle,
                             color = MaterialTheme.colorScheme.onSurface
                         )
@@ -218,11 +223,13 @@ fun BodyProgressScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedTextField(
                                 value = weightInput,
-                                onValueChange = { weightInput = it },
-                                label = { Text("Weight (kg)") },
+                                onValueChange = { weightInput = it.filter { c -> c.isDigit() || c == '.' } },
+                                label = { Text("Weight ($weightUnit)") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 singleLine = true,
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("progress_weight_input")
                             )
                             OutlinedTextField(
                                 value = weightNote,
@@ -238,7 +245,8 @@ fun BodyProgressScreen(
                             icon = Icons.Filled.MonitorWeight,
                             onClick = {
                                 weightInput.toDoubleOrNull()?.let { w ->
-                                    onLogWeight(w.coerceIn(25.0, 400.0), weightNote)
+                                    val kg = UnitFormatter.inputWeightToKg(w, unitSystem).coerceIn(25.0, 400.0)
+                                    onLogWeight(kg, weightNote)
                                     weightNote = ""
                                 }
                             },
@@ -249,7 +257,9 @@ fun BodyProgressScreen(
                         Spacer(modifier = Modifier.height(16.dp))
                         if (filteredWeights.isNotEmpty()) {
                             TrendLineChart(
-                                points = filteredWeights.map { it.dateKey.takeLast(5) to it.weightKg.toFloat() }
+                                points = filteredWeights.map {
+                                    it.dateKey.takeLast(5) to UnitFormatter.kgToDisplayWeight(it.weightKg, unitSystem).toFloat()
+                                }
                             )
                         } else {
                             EmptyStateCard(
@@ -280,7 +290,7 @@ fun BodyProgressScreen(
                             )
                             StatCard(
                                 title = "GPS Distance",
-                                value = String.format(Locale.US, "%.1f km", filteredGps.sumOf { it.distanceKm }),
+                                value = UnitFormatter.formatDistance(filteredGps.sumOf { it.distanceKm }, unitSystem, decimals = 1),
                                 subtitle = "${filteredGps.size} sessions",
                                 icon = Icons.Filled.EmojiEvents,
                                 tint = MaterialTheme.colorScheme.secondary,
@@ -320,26 +330,26 @@ fun BodyProgressScreen(
 
                 item {
                     FitTrackCard(modifier = Modifier.fillMaxWidth()) {
-                        SectionHeader(title = "Body Measurements (cm)")
+                        SectionHeader(title = "Body Measurements ($lengthUnit)")
                         Spacer(modifier = Modifier.height(10.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = waistText,
-                                onValueChange = { waistText = it },
+                                onValueChange = { waistText = it.filter { c -> c.isDigit() || c == '.' } },
                                 label = { Text("Waist") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
                                 value = chestText,
-                                onValueChange = { chestText = it },
+                                onValueChange = { chestText = it.filter { c -> c.isDigit() || c == '.' } },
                                 label = { Text("Chest") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
                                 value = hipsText,
-                                onValueChange = { hipsText = it },
+                                onValueChange = { hipsText = it.filter { c -> c.isDigit() || c == '.' } },
                                 label = { Text("Hips") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
@@ -349,14 +359,14 @@ fun BodyProgressScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedTextField(
                                 value = armsText,
-                                onValueChange = { armsText = it },
+                                onValueChange = { armsText = it.filter { c -> c.isDigit() || c == '.' } },
                                 label = { Text("Arms") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
                             )
                             OutlinedTextField(
                                 value = legsText,
-                                onValueChange = { legsText = it },
+                                onValueChange = { legsText = it.filter { c -> c.isDigit() || c == '.' } },
                                 label = { Text("Legs") },
                                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                                 modifier = Modifier.weight(1f)
@@ -367,11 +377,11 @@ fun BodyProgressScreen(
                             text = "Save Measurements",
                             onClick = {
                                 onLogMeasurements(
-                                    waistText.toDoubleOrNull() ?: 0.0,
-                                    chestText.toDoubleOrNull() ?: 0.0,
-                                    armsText.toDoubleOrNull() ?: 0.0,
-                                    legsText.toDoubleOrNull() ?: 0.0,
-                                    hipsText.toDoubleOrNull() ?: 0.0
+                                    UnitFormatter.inputHeightToCm(waistText.toDoubleOrNull() ?: 0.0, unitSystem),
+                                    UnitFormatter.inputHeightToCm(chestText.toDoubleOrNull() ?: 0.0, unitSystem),
+                                    UnitFormatter.inputHeightToCm(armsText.toDoubleOrNull() ?: 0.0, unitSystem),
+                                    UnitFormatter.inputHeightToCm(legsText.toDoubleOrNull() ?: 0.0, unitSystem),
+                                    UnitFormatter.inputHeightToCm(hipsText.toDoubleOrNull() ?: 0.0, unitSystem)
                                 )
                                 waistText = ""; chestText = ""; armsText = ""; legsText = ""; hipsText = ""
                             },
@@ -381,9 +391,10 @@ fun BodyProgressScreen(
                         )
                         if (measurements.isNotEmpty()) {
                             val latest = measurements.first()
+                            fun fmtMeasure(cm: Double) = String.format(Locale.US, "%.1f", UnitFormatter.cmToDisplayHeight(cm, unitSystem))
                             Spacer(modifier = Modifier.height(10.dp))
                             Text(
-                                text = "Latest (${latest.dateKey}): Waist ${latest.waistCm}cm • Chest ${latest.chestCm}cm • Arms ${latest.armsCm}cm • Legs ${latest.legsCm}cm",
+                                text = "Latest (${latest.dateKey}): Waist ${fmtMeasure(latest.waistCm)}$lengthUnit • Chest ${fmtMeasure(latest.chestCm)}$lengthUnit • Arms ${fmtMeasure(latest.armsCm)}$lengthUnit • Legs ${fmtMeasure(latest.legsCm)}$lengthUnit",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.secondary
                             )

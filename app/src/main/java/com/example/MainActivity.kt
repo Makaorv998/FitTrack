@@ -1,6 +1,7 @@
 package com.example
 
 import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -76,14 +77,10 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
-import com.example.data.ai.FitTrackAiService
 import com.example.data.firebase.AuthManager
-import com.example.data.firebase.FitTrackRepository
 import com.example.data.firebase.configureAppCheck
-import com.example.platform.RestTimerAndSessionStore
-import com.example.platform.StepCounterManager
+import com.example.di.AppContainer
 import com.example.platform.UpdateNotificationManager
-import com.example.platform.UserPreferencesStore
 import com.example.ui.AppUpdateViewModel
 import com.example.ui.FitTrackViewModel
 import com.example.ui.components.AuroraAmbientBackground
@@ -91,6 +88,7 @@ import com.example.ui.components.BottomNavTabItem
 import com.example.ui.components.ErrorBannerCard
 import com.example.ui.components.FloatingAIButton
 import com.example.ui.components.FloatingBottomNavigationBar
+import com.example.ui.components.OfflineStatusBanner
 import com.example.ui.components.SkeletonDashboard
 import com.example.ui.navigation.FitTrackRoute
 import com.example.ui.screens.ActivityMapScreen
@@ -115,6 +113,7 @@ import com.example.ui.screens.WorkoutsScreen
 import com.example.ui.theme.FitTrackTheme
 import com.example.ui.theme.rememberReducedMotion
 import com.google.firebase.Firebase
+import com.google.firebase.FirebaseApp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.auth
@@ -122,6 +121,7 @@ import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val pendingUpdateNavTarget = MutableStateFlow<Pair<String, Long?>?>(null)
@@ -159,7 +159,12 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-private fun observeAuthState() = callbackFlow<FirebaseUser?> {
+private fun observeAuthState(context: Context) = callbackFlow<FirebaseUser?> {
+    if (FirebaseApp.getApps(context).isEmpty()) {
+        trySend(null)
+        close()
+        return@callbackFlow
+    }
     val auth = Firebase.auth
     val listener = FirebaseAuth.AuthStateListener { firebaseAuth ->
         trySend(firebaseAuth.currentUser)
@@ -176,8 +181,31 @@ private fun FitTrackAppRoot(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val firebaseReady = remember(context) {
+        FirebaseApp.getApps(context).isNotEmpty() || FirebaseApp.initializeApp(context) != null
+    }
+    if (!firebaseReady) {
+        FitTrackTheme(themePreference = "dark") {
+            AuroraAmbientBackground {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(24.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    ErrorBannerCard(
+                        message = "Firebase configuration is unavailable. Verify Google Services setup and restart the app."
+                    )
+                }
+            }
+        }
+        return
+    }
+
     val credentialManager = remember(context) { CredentialManager.create(context) }
-    val currentUser by remember { observeAuthState() }.collectAsStateWithLifecycle(initialValue = Firebase.auth.currentUser)
+    val currentUser by remember { observeAuthState(context) }.collectAsStateWithLifecycle(
+        initialValue = runCatching { Firebase.auth.currentUser }.getOrNull()
+    )
     var autoSignInChecked by remember { mutableStateOf(currentUser != null) }
     val reducedMotion = rememberReducedMotion()
     var splashReady by remember { mutableStateOf(reducedMotion) }
@@ -239,19 +267,17 @@ private fun AuthenticatedFitTrackShell(
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
+    val appContainer = remember(appContext) { AppContainer.getInstance(appContext) }
+    val credentialManager = remember(context) { CredentialManager.create(context) }
+    val scope = rememberCoroutineScope()
     val viewModel: FitTrackViewModel = viewModel(
         key = user.uid,
-        factory = remember(user.uid) {
+        factory = remember(user.uid, appContainer) {
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return FitTrackViewModel(
-                        repository = FitTrackRepository(appContext),
-                        aiService = FitTrackAiService(),
-                        stepManager = StepCounterManager(appContext),
-                        restSessionStore = RestTimerAndSessionStore(appContext),
-                        userPreferencesStore = UserPreferencesStore(appContext),
-                        currentUserId = user.uid,
+                    return appContainer.createFitTrackViewModel(
+                        userId = user.uid,
                         userEmail = user.email.orEmpty(),
                         userDisplayName = user.displayName.orEmpty(),
                         userPhotoUrl = user.photoUrl?.toString().orEmpty()
@@ -262,11 +288,11 @@ private fun AuthenticatedFitTrackShell(
     )
     val updateViewModel: AppUpdateViewModel = viewModel(
         key = "app_update_${user.uid}",
-        factory = remember(appContext) {
+        factory = remember(appContainer) {
             object : ViewModelProvider.Factory {
                 @Suppress("UNCHECKED_CAST")
                 override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                    return AppUpdateViewModel.createDefault(appContext) as T
+                    return appContainer.createAppUpdateViewModel() as T
                 }
             }
         }
@@ -328,6 +354,7 @@ private fun AuthenticatedFitTrackShell(
     val challenges by viewModel.challenges.collectAsStateWithLifecycle()
     val aiMessages by viewModel.aiMessages.collectAsStateWithLifecycle()
     val progressPhotos by viewModel.progressPhotos.collectAsStateWithLifecycle()
+    val goalHistory by viewModel.goalHistory.collectAsStateWithLifecycle()
 
     val coachState by viewModel.coachState.collectAsStateWithLifecycle()
     val foodScanState by viewModel.foodScanState.collectAsStateWithLifecycle()
@@ -337,8 +364,12 @@ private fun AuthenticatedFitTrackShell(
     val aiWorkoutAnalysisState by viewModel.aiWorkoutAnalysisState.collectAsStateWithLifecycle()
     val bannerError by viewModel.bannerError.collectAsStateWithLifecycle()
     val statusMessage by viewModel.statusMessage.collectAsStateWithLifecycle()
+    val isOnline by viewModel.isOnline.collectAsStateWithLifecycle()
 
-    FitTrackTheme(themePreference = profile?.themePreference ?: "dark") {
+    FitTrackTheme(
+        themePreference = profile?.themePreference ?: "dark",
+        reducedMotionOverride = profile?.reducedMotionEnabled == true
+    ) {
         if (!profileLoaded) {
             AuroraAmbientBackground {
                 Box(
@@ -524,6 +555,11 @@ private fun AuthenticatedFitTrackShell(
                             .padding(top = innerPadding.calculateTopPadding())
                             .consumeWindowInsets(WindowInsets.statusBars)
                     ) {
+                        if (!isOnline) {
+                            Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+                                OfflineStatusBanner()
+                            }
+                        }
                         if (bannerError != null) {
                             Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp)) {
                                 ErrorBannerCard(
@@ -614,6 +650,7 @@ private fun AuthenticatedFitTrackShell(
                                     onSaveCustomFood = { food -> viewModel.saveCustomFood(food) },
                                     onToggleFavorite = { food -> viewModel.toggleFavoriteFood(food) },
                                     onAddWater = { amount -> viewModel.addWater(amount) },
+                                    onDeleteWaterLog = { id -> viewModel.deleteWaterLog(id) },
                                     onSaveNutritionPreferences = { viewModel.updateNutritionPreferences(it) },
                                     onSaveRecipe = { viewModel.saveRecipe(it) },
                                     onDeleteRecipe = { viewModel.deleteRecipe(it) },
@@ -707,6 +744,7 @@ private fun AuthenticatedFitTrackShell(
                                     profile = profile,
                                     trainingPreferences = trainingPreferences,
                                     nutritionPreferences = nutritionPreferences,
+                                    goalHistory = goalHistory,
                                     onSavePersonalInfoAndGoals = { name, age, sex, height, weight, targetWeight, actLevel, steps, water, cals, goal ->
                                         viewModel.updatePersonalInfoAndGoals(
                                             displayName = name,
@@ -722,6 +760,25 @@ private fun AuthenticatedFitTrackShell(
                                             goal = goal
                                         )
                                     },
+                                    onSavePersonalInfoFull = { name, age, dobIso, sex, height, weight, targetWeight, actLevel, steps, water, cals, goal ->
+                                        viewModel.updatePersonalInfoAndGoals(
+                                            displayName = name,
+                                            ageYears = age,
+                                            sex = sex,
+                                            heightCm = height,
+                                            weightKg = weight,
+                                            targetWeightKg = targetWeight,
+                                            activityLevel = actLevel,
+                                            stepGoal = steps,
+                                            waterGoalMl = water,
+                                            calorieGoal = cals,
+                                            goal = goal,
+                                            dobIso = dobIso
+                                        )
+                                    },
+                                    onSaveGoalHistoryEntry = { viewModel.saveGoalHistoryEntry(it) },
+                                    onUpdateGoalStatus = { entry, status -> viewModel.updateGoalStatus(entry, status) },
+                                    onDeleteGoalHistoryEntry = { viewModel.deleteGoalHistoryEntry(it) },
                                     onSaveTrainingPreferences = { viewModel.updateTrainingPreferences(it) },
                                     onSaveNutritionPreferences = { viewModel.updateNutritionPreferences(it) },
                                     onOpenBodyProgress = { navController.navigate(FitTrackRoute.BodyProgress) },
@@ -737,6 +794,7 @@ private fun AuthenticatedFitTrackShell(
                                 ActivityMapScreen(
                                     gpsHistory = gpsHistory,
                                     initialActivityId = route.activityId,
+                                    unitSystem = profile?.unitSystem ?: "metric",
                                     onBack = { navController.popBackStack() }
                                 )
                             }
@@ -746,6 +804,7 @@ private fun AuthenticatedFitTrackShell(
                                     messages = aiMessages,
                                     coachState = coachState,
                                     onSendMessage = { viewModel.sendCoachMessage(it) },
+                                    onClearHistory = { viewModel.clearAiChatHistory() },
                                     onBack = { navController.popBackStack() }
                                 )
                             }
@@ -768,6 +827,7 @@ private fun AuthenticatedFitTrackShell(
                                     nutritionPreferences = nutritionPreferences,
                                     onGenerate = { prefs, allergies -> viewModel.generateAiMealPlan(prefs, allergies) },
                                     onLogSuggestion = { meal -> viewModel.logDirectMeal(meal) },
+                                    onSaveToPlan = { entry -> viewModel.savePlannedMeal(entry) },
                                     onBack = { navController.popBackStack() }
                                 )
                             }
@@ -814,7 +874,8 @@ private fun AuthenticatedFitTrackShell(
                                     uid = user.uid,
                                     challenges = challenges,
                                     onUpdateChallenge = { ch, valNum, joined -> viewModel.updateChallengeProgress(ch, valNum, joined) },
-                                    onBack = { navController.popBackStack() }
+                                    onBack = { navController.popBackStack() },
+                                    unitSystem = profile?.unitSystem ?: "metric"
                                 )
                             }
 
@@ -823,6 +884,7 @@ private fun AuthenticatedFitTrackShell(
                                     profile = profile,
                                     onChangeTheme = { viewModel.updateThemePreference(it) },
                                     onChangeUnits = { viewModel.updateUnitSystem(it) },
+                                    onToggleReducedMotion = { viewModel.updateReducedMotion(it) },
                                     onUpdateConsent = { sensor, loc ->
                                         profile?.let { p ->
                                             viewModel.updateProfileGoals(
@@ -839,7 +901,19 @@ private fun AuthenticatedFitTrackShell(
                                     onExportJson = { viewModel.exportUserDataJson() },
                                     onSignOut = onSignOut,
                                     onDeleteAccountData = {
-                                        viewModel.deleteAccountData { onSignOut() }
+                                        viewModel.deleteAccountData {
+                                            AuthManager.deleteCurrentAuthAccount(
+                                                context = context,
+                                                credentialManager = credentialManager,
+                                                scope = scope,
+                                                onDeleted = {},
+                                                onError = { msg ->
+                                                    scope.launch {
+                                                        snackbarHostState.showSnackbar("User data deleted. $msg")
+                                                    }
+                                                }
+                                            )
+                                        }
                                     },
                                     onBack = { navController.popBackStack() },
                                     updateUiState = updateUiState,

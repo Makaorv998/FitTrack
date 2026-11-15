@@ -63,6 +63,7 @@ fun SettingsScreen(
     profile: UserProfile?,
     onChangeTheme: (String) -> Unit,
     onChangeUnits: (String) -> Unit,
+    onToggleReducedMotion: (Boolean) -> Unit = {},
     onUpdateConsent: (Boolean, Boolean) -> Unit,
     onExportJson: suspend () -> String,
     onSignOut: () -> Unit,
@@ -127,6 +128,26 @@ fun SettingsScreen(
                                 label = { Text(label) }
                             )
                         }
+                    }
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Reduced Motion", style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Minimize aurora ambient motion and decorative transitions",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = profile?.reducedMotionEnabled ?: false,
+                            onCheckedChange = onToggleReducedMotion,
+                            modifier = Modifier.testTag("reduced_motion_switch")
+                        )
                     }
                 }
 

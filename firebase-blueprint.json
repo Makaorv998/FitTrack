@@ -10,6 +10,7 @@
         "email": { "type": "string" },
         "photoUrl": { "type": "string" },
         "ageYears": { "type": "integer" },
+        "dateOfBirthIso": { "type": "string" },
         "sex": { "type": "string", "enum": ["male", "female", "other"] },
         "heightCm": { "type": "number" },
         "weightKg": { "type": "number" },
@@ -22,6 +23,7 @@
         "onboardingCompleted": { "type": "boolean" },
         "unitSystem": { "type": "string", "enum": ["metric", "imperial"] },
         "themePreference": { "type": "string", "enum": ["system", "dark", "light"] },
+        "reducedMotionEnabled": { "type": "boolean" },
         "sensorConsentGranted": { "type": "boolean" },
         "locationConsentGranted": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time", "description": "Server timestamp set via FieldValue.serverTimestamp()" },
@@ -77,6 +79,7 @@
         "brand": { "type": "string" },
         "servingSizeGrams": { "type": "number" },
         "servingLabel": { "type": "string" },
+        "measurementUnit": { "type": "string", "enum": ["g", "ml"] },
         "caloriesPer100g": { "type": "number" },
         "proteinPer100g": { "type": "number" },
         "carbsPer100g": { "type": "number" },
@@ -100,13 +103,14 @@
         "mealType": { "type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"] },
         "foodName": { "type": "string" },
         "grams": { "type": "number" },
+        "measurementUnit": { "type": "string", "enum": ["g", "ml"] },
         "calories": { "type": "number" },
         "proteinG": { "type": "number" },
         "carbsG": { "type": "number" },
         "fatG": { "type": "number" },
         "fiberG": { "type": "number" },
         "sugarG": { "type": "number" },
-        "source": { "type": "string", "enum": ["manual", "ai_scan", "ai_plan"] },
+        "source": { "type": "string", "enum": ["manual", "ai_scan", "ai_plan", "recipe", "meal_plan"] },
         "createdAt": { "type": "string", "format": "date-time" },
         "updatedAt": { "type": "string", "format": "date-time" }
       },
@@ -315,6 +319,74 @@
       },
       "required": ["userId", "localUri", "weightKg", "caption", "dateKey", "createdAt"]
     },
+    "GoalHistoryEntry": {
+      "title": "GoalHistoryEntry",
+      "description": "Structured user fitness goal lifecycle entry (active, paused, completed, archived).",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "goalType": { "type": "string", "enum": ["weight_loss", "muscle_gain", "general_fitness", "weight_maintenance", "endurance", "strength"] },
+        "title": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "paused", "completed", "archived"] },
+        "targetValue": { "type": "number" },
+        "currentValue": { "type": "number" },
+        "unit": { "type": "string" },
+        "targetDateKey": { "type": "string" },
+        "completedDateKey": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "goalType", "title", "status", "targetValue", "currentValue", "unit", "targetDateKey", "notes", "createdAt", "updatedAt"]
+    },
+    "SavedRecipeDoc": {
+      "title": "SavedRecipeDoc",
+      "description": "Cloud-synced custom user recipe with ingredient nutrition.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "servings": { "type": "integer" },
+        "notes": { "type": "string" },
+        "measurementUnit": { "type": "string", "enum": ["g", "ml"] },
+        "ingredients": { "type": "array" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "name", "servings", "notes", "ingredients", "createdAt", "updatedAt"]
+    },
+    "PlannedMealDoc": {
+      "title": "PlannedMealDoc",
+      "description": "Cloud-synced planned meal slot in weekly meal planner.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "dayOfWeek": { "type": "string" },
+        "mealType": { "type": "string", "enum": ["breakfast", "lunch", "dinner", "snack"] },
+        "title": { "type": "string" },
+        "grams": { "type": "number" },
+        "measurementUnit": { "type": "string", "enum": ["g", "ml"] },
+        "calories": { "type": "number" },
+        "proteinG": { "type": "number" },
+        "carbsG": { "type": "number" },
+        "fatG": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "dayOfWeek", "mealType", "title", "grams", "calories", "proteinG", "carbsG", "fatG", "createdAt", "updatedAt"]
+    },
+    "UserSyncPreferences": {
+      "title": "UserSyncPreferences",
+      "description": "Cloud-synced user preferences for training, nutrition, or notifications.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "prefType": { "type": "string", "enum": ["training", "nutrition", "notifications"] },
+        "payloadJson": { "type": "string" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "prefType", "payloadJson", "updatedAt"]
+    },
     "AppRelease": {
       "title": "AppRelease",
       "description": "Publicly readable, admin-managed FitTrack application release and categorized changelog entry.",
@@ -438,6 +510,22 @@
     "/users/{userId}/progress_photos/{photoId}": {
       "schema": { "$ref": "#/entities/ProgressPhotoNote" },
       "description": "Private progress photo metadata."
+    },
+    "/users/{userId}/goal_history/{goalId}": {
+      "schema": { "$ref": "#/entities/GoalHistoryEntry" },
+      "description": "Structured user fitness goal lifecycle and history."
+    },
+    "/users/{userId}/recipes/{recipeId}": {
+      "schema": { "$ref": "#/entities/SavedRecipeDoc" },
+      "description": "Cloud-synced saved recipes."
+    },
+    "/users/{userId}/planned_meals/{entryId}": {
+      "schema": { "$ref": "#/entities/PlannedMealDoc" },
+      "description": "Cloud-synced weekly meal plan entries."
+    },
+    "/users/{userId}/preferences/{prefId}": {
+      "schema": { "$ref": "#/entities/UserSyncPreferences" },
+      "description": "Cloud-synced training, nutrition, and notification preferences."
     },
     "/app_releases/{releaseId}": {
       "schema": { "$ref": "#/entities/AppRelease" },

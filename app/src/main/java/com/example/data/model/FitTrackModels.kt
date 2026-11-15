@@ -13,6 +13,7 @@ data class UserProfile(
     val email: String = "",
     val photoUrl: String = "",
     val ageYears: Long = 28L,
+    val dateOfBirthIso: String = "",
     val sex: String = "male",
     val heightCm: Double = 175.0,
     val weightKg: Double = 72.0,
@@ -25,6 +26,7 @@ data class UserProfile(
     val onboardingCompleted: Boolean = false,
     val unitSystem: String = "metric",
     val themePreference: String = "dark",
+    val reducedMotionEnabled: Boolean = false,
     val sensorConsentGranted: Boolean = false,
     val locationConsentGranted: Boolean = false,
     @ServerTimestamp val createdAt: Timestamp? = null,
@@ -78,6 +80,7 @@ data class FoodItem(
     val brand: String = "",
     val servingSizeGrams: Double = 100.0,
     val servingLabel: String = "100g",
+    val measurementUnit: String = "g",
     val caloriesPer100g: Double = 0.0,
     val proteinPer100g: Double = 0.0,
     val carbsPer100g: Double = 0.0,
@@ -98,6 +101,7 @@ data class MealLog(
     val mealType: String = "breakfast",
     val foodName: String = "",
     val grams: Double = 100.0,
+    val measurementUnit: String = "g",
     val calories: Double = 0.0,
     val proteinG: Double = 0.0,
     val carbsG: Double = 0.0,
@@ -325,6 +329,23 @@ data class ProgressPhotoNote(
     val caption: String = "",
     val dateKey: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null
+)
+
+@IgnoreExtraProperties
+data class GoalHistoryEntry(
+    @DocumentId val id: String = "",
+    val userId: String = "",
+    val goalType: String = "general_fitness",
+    val title: String = "",
+    val status: String = "active",
+    val targetValue: Double = 0.0,
+    val currentValue: Double = 0.0,
+    val unit: String = "kg",
+    val targetDateKey: String = "",
+    val completedDateKey: String = "",
+    val notes: String = "",
+    @ServerTimestamp val createdAt: Timestamp? = null,
+    @ServerTimestamp val updatedAt: Timestamp? = null
 )
 
 data class ExerciseDefinition(

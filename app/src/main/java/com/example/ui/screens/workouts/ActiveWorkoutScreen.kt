@@ -66,6 +66,7 @@ import com.example.data.model.ExerciseDefinition
 import com.example.data.model.PersonalRecord
 import com.example.data.model.WorkoutSessionLog
 import com.example.domain.FitnessCalculator
+import com.example.domain.UnitFormatter
 import com.example.domain.WorkoutAnalyticsEngine
 import com.example.platform.RestTimerSettings
 import com.example.ui.ActiveWorkoutState
@@ -84,16 +85,17 @@ import com.example.ui.components.SecondaryButton
 import com.example.ui.components.StatusBadge
 import com.example.ui.theme.LocalFitTrackColors
 
-private fun formatCompactWeight(kg: Double): String = when {
-    kg <= 0.0 -> "BW"
-    kg % 1.0 == 0.0 -> "${kg.toInt()}"
-    else -> String.format(java.util.Locale.US, "%.1f", kg)
+private fun formatCompactWeight(kg: Double, unitSystem: String): String {
+    if (kg <= 0.0) return "BW"
+    val v = UnitFormatter.kgToDisplayWeight(kg, unitSystem)
+    return if (kotlin.math.abs(v - v.toInt()) < 0.05) "${v.toInt()}" else String.format(java.util.Locale.US, "%.1f", v)
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ActiveWorkoutScreen(
     active: ActiveWorkoutState,
+    unitSystem: String = "metric",
     sessions: List<WorkoutSessionLog>,
     personalRecords: List<PersonalRecord>,
     aiSubstitutionsState: AsyncState<String>,
@@ -204,7 +206,7 @@ fun ActiveWorkoutScreen(
                         Spacer(modifier = Modifier.height(6.dp))
                         Text(active.plan.name, style = MaterialTheme.typography.titleLarge)
                         Text(
-                            text = "${FitnessCalculator.formatDuration(active.elapsedSeconds)} elapsed • Working ${active.workingVolumeKg.toInt()} kg",
+                            text = "${FitnessCalculator.formatDuration(active.elapsedSeconds)} elapsed • Working ${WorkoutAnalyticsEngine.formatVolume(active.workingVolumeKg, unitSystem)}",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.secondary
                         )
@@ -422,7 +424,7 @@ fun ActiveWorkoutScreen(
                                             .testTag("confirm_overload_button")
                                     ) {
                                         Text(
-                                            "Confirm & Apply ${WorkoutAnalyticsEngine.formatWeight(progression.suggestedWeightKg)} × ${progression.suggestedReps} reps"
+                                            "Confirm & Apply ${WorkoutAnalyticsEngine.formatWeight(progression.suggestedWeightKg, unitSystem)} × ${progression.suggestedReps} reps"
                                         )
                                     }
                                 }
@@ -473,19 +475,19 @@ fun ActiveWorkoutScreen(
                             } else {
                                 "${currentEntry.repRangeMin}-${currentEntry.repRangeMax}"
                             }
-                            val targetCell = "${formatCompactWeight(currentEntry.targetWeightKg)}×$targetRepLabel"
+                            val targetCell = "${formatCompactWeight(currentEntry.targetWeightKg, unitSystem)}×$targetRepLabel"
 
                             for (rowIdx in 0 until displayedRowCount) {
                                 val logged = currentRecord.sets.getOrNull(rowIdx)
                                 val prev = previousSetsForExercise.getOrNull(rowIdx)
-                                val prevCell = if (prev != null) "${formatCompactWeight(prev.weightKg)}×${prev.reps}" else "—"
+                                val prevCell = if (prev != null) "${formatCompactWeight(prev.weightKg, unitSystem)}×${prev.reps}" else "—"
                                 val isDone = logged != null
                                 val isNextActive = !isDone && rowIdx == currentRecord.sets.size
 
                                 val actualCell = if (logged != null) {
-                                    "${formatCompactWeight(logged.weightKg)}×${logged.reps}"
+                                    "${formatCompactWeight(logged.weightKg, unitSystem)}×${logged.reps}"
                                 } else {
-                                    "${formatCompactWeight(weightInput)}×$repsInput"
+                                    "${formatCompactWeight(weightInput, unitSystem)}×$repsInput"
                                 }
 
                                 val setTagSuffix = when ((logged?.setType ?: selectedSetType).lowercase()) {
@@ -587,21 +589,22 @@ fun ActiveWorkoutScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         // Weight Stepper + Tap for exact keyboard input
+                        val weightStepKg = if (UnitFormatter.isImperial(unitSystem)) UnitFormatter.inputWeightToKg(5.0, "imperial") else 2.5
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                             IconButton(
-                                onClick = { weightInput = (weightInput - 2.5).coerceAtLeast(0.0) },
+                                onClick = { weightInput = (weightInput - weightStepKg).coerceAtLeast(0.0) },
                                 modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(Icons.Filled.Remove, contentDescription = "Decrease weight")
                             }
                             Text(
-                                text = WorkoutAnalyticsEngine.formatWeight(weightInput),
+                                text = WorkoutAnalyticsEngine.formatWeight(weightInput, unitSystem),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.clickable { showDirectInputDialog = true }
                             )
                             IconButton(
-                                onClick = { weightInput += 2.5 },
+                                onClick = { weightInput += weightStepKg },
                                 modifier = Modifier.size(48.dp)
                             ) {
                                 Icon(Icons.Filled.Add, contentDescription = "Increase weight")
@@ -716,8 +719,14 @@ fun ActiveWorkoutScreen(
     }
 
     if (showDirectInputDialog) {
-        var wtText by remember { mutableStateOf(if (weightInput == 0.0) "" else weightInput.toString()) }
+        val displayInit = UnitFormatter.kgToDisplayWeight(weightInput, unitSystem)
+        var wtText by remember {
+            mutableStateOf(
+                if (weightInput <= 0.0) "" else String.format(java.util.Locale.US, "%.1f", displayInit).trimEnd('0').trimEnd('.')
+            )
+        }
         var rpText by remember { mutableStateOf(repsInput.toString()) }
+        val unitLbl = UnitFormatter.weightUnitLabel(unitSystem)
         AlertDialog(
             onDismissRequest = { showDirectInputDialog = false },
             title = { Text("Set Weight & Reps") },
@@ -726,7 +735,7 @@ fun ActiveWorkoutScreen(
                     OutlinedTextField(
                         value = wtText,
                         onValueChange = { wtText = it.filter { c -> c.isDigit() || c == '.' } },
-                        label = { Text("Weight (kg, 0 = Bodyweight)") },
+                        label = { Text("Weight ($unitLbl, 0 = Bodyweight)") },
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                         singleLine = true
                     )
@@ -741,7 +750,8 @@ fun ActiveWorkoutScreen(
             },
             confirmButton = {
                 Button(onClick = {
-                    weightInput = (wtText.toDoubleOrNull() ?: 0.0).coerceIn(0.0, 600.0)
+                    val entered = wtText.toDoubleOrNull() ?: 0.0
+                    weightInput = UnitFormatter.inputWeightToKg(entered, unitSystem).coerceIn(0.0, 600.0)
                     repsInput = (rpText.toIntOrNull() ?: repsInput).coerceIn(1, 200)
                     showDirectInputDialog = false
                 }) { Text("Apply") }
@@ -755,6 +765,7 @@ fun ActiveWorkoutScreen(
     editingSetPair?.let { (setIdx, setRec) ->
         EditLoggedSetDialog(
             set = setRec,
+            unitSystem = unitSystem,
             onDismiss = { editingSetPair = null },
             onDelete = {
                 onDeleteLoggedSet(idx, setIdx)
@@ -793,7 +804,7 @@ fun ActiveWorkoutScreen(
     if (showFinishDialog) {
         ConfirmationModal(
             title = "Finish Workout?",
-            message = "Save ${active.completedSetsCount} completed sets (${active.workingVolumeKg.toInt()} kg working volume) to your training log and update Personal Records?",
+            message = "Save ${active.completedSetsCount} completed sets (${WorkoutAnalyticsEngine.formatVolume(active.workingVolumeKg, unitSystem)} working volume) to your training log and update Personal Records?",
             confirmText = "Save Workout",
             onConfirm = {
                 showFinishDialog = false
@@ -822,13 +833,20 @@ fun ActiveWorkoutScreen(
 @Composable
 private fun EditLoggedSetDialog(
     set: CompletedSetRecord,
+    unitSystem: String = "metric",
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     onSave: (String, Int, Double) -> Unit
 ) {
     var setType by remember { mutableStateOf(set.setType) }
-    var weightText by remember { mutableStateOf(set.weightKg.toString()) }
+    val initDisplay = UnitFormatter.kgToDisplayWeight(set.weightKg, unitSystem)
+    var weightText by remember {
+        mutableStateOf(
+            if (set.weightKg <= 0.0) "0" else String.format(java.util.Locale.US, "%.1f", initDisplay).trimEnd('0').trimEnd('.')
+        )
+    }
     var repsText by remember { mutableStateOf(set.reps.toString()) }
+    val unitLbl = UnitFormatter.weightUnitLabel(unitSystem)
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -847,7 +865,7 @@ private fun EditLoggedSetDialog(
                 OutlinedTextField(
                     value = weightText,
                     onValueChange = { weightText = it },
-                    label = { Text("Weight (kg)") },
+                    label = { Text("Weight ($unitLbl)") },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                     singleLine = true
                 )
@@ -862,10 +880,12 @@ private fun EditLoggedSetDialog(
         },
         confirmButton = {
             Button(onClick = {
+                val convertedKg = weightText.toDoubleOrNull()?.let { UnitFormatter.inputWeightToKg(it, unitSystem) }
+                    ?: set.weightKg
                 onSave(
                     setType,
                     (repsText.toIntOrNull() ?: set.reps.toInt()).coerceAtLeast(1),
-                    (weightText.toDoubleOrNull() ?: set.weightKg).coerceAtLeast(0.0)
+                    convertedKg.coerceAtLeast(0.0)
                 )
             }) { Text("Update Set") }
         },
