@@ -314,6 +314,60 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["userId", "localUri", "weightKg", "caption", "dateKey", "createdAt"]
+    },
+    "AppRelease": {
+      "title": "AppRelease",
+      "description": "Publicly readable, admin-managed FitTrack application release and categorized changelog entry.",
+      "type": "object",
+      "properties": {
+        "versionName": { "type": "string", "maxLength": 32 },
+        "versionCode": { "type": "integer" },
+        "releaseDate": { "type": "string", "maxLength": 24 },
+        "title": { "type": "string", "maxLength": 120 },
+        "summary": { "type": "string", "maxLength": 500 },
+        "severity": { "type": "string", "enum": ["optional", "recommended", "critical"] },
+        "minSupportedVersionCode": { "type": "integer" },
+        "minSupportedVersionName": { "type": "string", "maxLength": 32 },
+        "distributionChannel": { "type": "string", "enum": ["play_store", "apk", "both"] },
+        "apkDownloadUrl": { "type": "string", "maxLength": 500 },
+        "apkSha256": { "type": "string", "maxLength": 64 },
+        "expectedSigningCertSha256": { "type": "string", "maxLength": 95 },
+        "playStoreUrl": { "type": "string", "maxLength": 500 },
+        "newFeatures": { "type": "array" },
+        "improvements": { "type": "array" },
+        "bugFixes": { "type": "array" },
+        "securityChanges": { "type": "array" },
+        "localizedEntries": { "type": "object" },
+        "isPublished": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["versionName", "versionCode", "releaseDate", "title", "summary", "severity", "minSupportedVersionCode", "minSupportedVersionName", "distributionChannel", "apkDownloadUrl", "apkSha256", "expectedSigningCertSha256", "playStoreUrl", "newFeatures", "improvements", "bugFixes", "securityChanges", "isPublished", "createdAt", "updatedAt"]
+    },
+    "UpdatePolicyConfig": {
+      "title": "UpdatePolicyConfig",
+      "description": "Remote update check interval, minimum supported version, and trusted APK host policy.",
+      "type": "object",
+      "properties": {
+        "checkIntervalMinutes": { "type": "integer" },
+        "minSupportedVersionCode": { "type": "integer" },
+        "latestVersionCode": { "type": "integer" },
+        "trustedApkHosts": { "type": "array" },
+        "defaultDistributionChannel": { "type": "string", "enum": ["play_store", "apk", "both"] },
+        "playUpdatePriorityThreshold": { "type": "integer" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["checkIntervalMinutes", "minSupportedVersionCode", "latestVersionCode", "trustedApkHosts", "defaultDistributionChannel", "playUpdatePriorityThreshold", "updatedAt"]
+    },
+    "AdminRole": {
+      "title": "AdminRole",
+      "description": "Server-assigned administrator role document authorizing release publishing.",
+      "type": "object",
+      "properties": {
+        "email": { "type": "string", "maxLength": 150 },
+        "role": { "type": "string", "enum": ["release_admin"] }
+      },
+      "required": ["email", "role"]
     }
   },
   "firestore": {
@@ -384,6 +438,18 @@
     "/users/{userId}/progress_photos/{photoId}": {
       "schema": { "$ref": "#/entities/ProgressPhotoNote" },
       "description": "Private progress photo metadata."
+    },
+    "/app_releases/{releaseId}": {
+      "schema": { "$ref": "#/entities/AppRelease" },
+      "description": "Publicly readable release metadata and categorized changelogs; admin-only writes."
+    },
+    "/app_config/{configId}": {
+      "schema": { "$ref": "#/entities/UpdatePolicyConfig" },
+      "description": "Remote update check policy configuration; publicly readable, admin-only writes."
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminRole" },
+      "description": "Server/console-provisioned release administrator directory."
     }
   }
 }

@@ -10,4 +10,10 @@
     <string name="ai_disclaimer">AI estimates and guidance are informational only and not medical advice.</string>
     <string name="calorie_estimate_disclaimer">Portion and calorie estimates from food photos are approximations. Confirm before saving.</string>
     <string name="minor_safeguard_notice">Safety Safeguard: Calorie-restriction and weight-loss deficits are disabled for users under 18. Focus on balanced nutrition and active habits.</string>
+    <string name="update_center_title">Update Center</string>
+    <string name="whats_new_title">What\'s New</string>
+    <string name="update_channel_optional_name">App Updates &amp; Features</string>
+    <string name="update_channel_optional_desc">Notifications when optional FitTrack updates or new releases are available.</string>
+    <string name="update_channel_critical_name">Critical App &amp; Security Updates</string>
+    <string name="update_channel_critical_desc">High-priority alerts for critical compatibility and security updates.</string>
 </resources>

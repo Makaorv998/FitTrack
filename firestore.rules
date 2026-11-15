@@ -16,6 +16,19 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isBootstrappedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email == 'sankouhhayser@gmail.com' &&
+        request.auth.token.email_verified == true;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        isBootstrappedAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
     function incoming() {
       return request.resource.data;
     }
@@ -233,6 +246,47 @@ service cloud.firestore {
         data.weightKg is number && data.weightKg >= 0 && data.weightKg <= 400 &&
         data.caption is string && data.caption.size() <= 200 &&
         data.dateKey is string && data.dateKey.size() >= 8 && data.dateKey.size() <= 16;
+    }
+
+    function isValidChangelogList(listVal) {
+      return listVal is list &&
+        listVal.size() <= 25 &&
+        (listVal.size() == 0 || (listVal[0] is string && listVal[0].size() <= 300));
+    }
+
+    function isValidAppRelease(data) {
+      return data.versionName is string && data.versionName.size() >= 1 && data.versionName.size() <= 32 &&
+        data.versionCode is int && data.versionCode >= 1 && data.versionCode <= 1000000000 &&
+        data.releaseDate is string && data.releaseDate.size() >= 8 && data.releaseDate.size() <= 24 &&
+        data.title is string && data.title.size() >= 1 && data.title.size() <= 120 &&
+        data.summary is string && data.summary.size() <= 500 &&
+        data.severity in ['optional', 'recommended', 'critical'] &&
+        data.minSupportedVersionCode is int && data.minSupportedVersionCode >= 0 && data.minSupportedVersionCode <= 1000000000 &&
+        data.minSupportedVersionName is string && data.minSupportedVersionName.size() <= 32 &&
+        data.distributionChannel in ['play_store', 'apk', 'both'] &&
+        data.apkDownloadUrl is string && data.apkDownloadUrl.size() <= 500 &&
+        (data.apkDownloadUrl == '' || data.apkDownloadUrl.matches('^https://.*')) &&
+        data.apkSha256 is string && data.apkSha256.size() <= 64 &&
+        (data.apkSha256 == '' || data.apkSha256.matches('^[a-fA-F0-9]{64}$')) &&
+        data.expectedSigningCertSha256 is string && data.expectedSigningCertSha256.size() <= 95 &&
+        data.playStoreUrl is string && data.playStoreUrl.size() <= 500 &&
+        (data.playStoreUrl == '' || data.playStoreUrl.matches('^https://.*')) &&
+        isValidChangelogList(data.newFeatures) &&
+        isValidChangelogList(data.improvements) &&
+        isValidChangelogList(data.bugFixes) &&
+        isValidChangelogList(data.securityChanges) &&
+        (!('localizedEntries' in data) || (data.localizedEntries is map && data.localizedEntries.size() <= 15)) &&
+        data.isPublished is bool;
+    }
+
+    function isValidUpdatePolicyConfig(data) {
+      return data.checkIntervalMinutes is int && data.checkIntervalMinutes >= 5 && data.checkIntervalMinutes <= 10080 &&
+        data.minSupportedVersionCode is int && data.minSupportedVersionCode >= 0 && data.minSupportedVersionCode <= 1000000000 &&
+        data.latestVersionCode is int && data.latestVersionCode >= 1 && data.latestVersionCode <= 1000000000 &&
+        data.trustedApkHosts is list && data.trustedApkHosts.size() <= 10 &&
+        (data.trustedApkHosts.size() == 0 || (data.trustedApkHosts[0] is string && data.trustedApkHosts[0].size() <= 120)) &&
+        data.defaultDistributionChannel in ['play_store', 'apk', 'both'] &&
+        data.playUpdatePriorityThreshold is int && data.playUpdatePriorityThreshold >= 0 && data.playUpdatePriorityThreshold <= 5;
     }
 
     match /users/{userId} {
@@ -524,6 +578,87 @@ service cloud.firestore {
         allow update: if false;
         allow delete: if isOwner(userId) && isValidId(photoId);
       }
+    }
+
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && (request.auth.uid == adminId || isAdmin());
+      allow list: if isBootstrappedAdmin();
+      allow create, update, delete: if false;
+    }
+
+    match /app_releases/{releaseId} {
+      allow get: if isValidId(releaseId) && (existing().isPublished == true || isAdmin());
+      allow list: if resource.data.isPublished == true || isBootstrappedAdmin();
+
+      allow create: if isAdmin() &&
+        isValidId(releaseId) &&
+        incoming().keys().hasAll([
+          'versionName', 'versionCode', 'releaseDate', 'title', 'summary',
+          'severity', 'minSupportedVersionCode', 'minSupportedVersionName',
+          'distributionChannel', 'apkDownloadUrl', 'apkSha256',
+          'expectedSigningCertSha256', 'playStoreUrl', 'newFeatures',
+          'improvements', 'bugFixes', 'securityChanges', 'isPublished',
+          'createdAt', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'versionName', 'versionCode', 'releaseDate', 'title', 'summary',
+          'severity', 'minSupportedVersionCode', 'minSupportedVersionName',
+          'distributionChannel', 'apkDownloadUrl', 'apkSha256',
+          'expectedSigningCertSha256', 'playStoreUrl', 'newFeatures',
+          'improvements', 'bugFixes', 'securityChanges', 'localizedEntries',
+          'isPublished', 'createdAt', 'updatedAt'
+        ]) &&
+        isValidTimestamp(incoming().createdAt) &&
+        isValidTimestamp(incoming().updatedAt) &&
+        isValidAppRelease(incoming());
+
+      allow update: if isAdmin() &&
+        isValidId(releaseId) &&
+        isValidAppRelease(incoming()) &&
+        incoming().createdAt == existing().createdAt &&
+        isValidTimestamp(incoming().updatedAt) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'versionName', 'versionCode', 'releaseDate', 'title', 'summary',
+          'severity', 'minSupportedVersionCode', 'minSupportedVersionName',
+          'distributionChannel', 'apkDownloadUrl', 'apkSha256',
+          'expectedSigningCertSha256', 'playStoreUrl', 'newFeatures',
+          'improvements', 'bugFixes', 'securityChanges', 'localizedEntries',
+          'isPublished', 'updatedAt'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(releaseId);
+    }
+
+    match /app_config/{configId} {
+      allow get: if isValidId(configId);
+      allow list: if false;
+
+      allow create: if isAdmin() &&
+        isValidId(configId) &&
+        incoming().keys().hasAll([
+          'checkIntervalMinutes', 'minSupportedVersionCode', 'latestVersionCode',
+          'trustedApkHosts', 'defaultDistributionChannel',
+          'playUpdatePriorityThreshold', 'updatedAt'
+        ]) &&
+        incoming().keys().hasOnly([
+          'checkIntervalMinutes', 'minSupportedVersionCode', 'latestVersionCode',
+          'trustedApkHosts', 'defaultDistributionChannel',
+          'playUpdatePriorityThreshold', 'updatedAt'
+        ]) &&
+        isValidTimestamp(incoming().updatedAt) &&
+        isValidUpdatePolicyConfig(incoming());
+
+      allow update: if isAdmin() &&
+        isValidId(configId) &&
+        isValidUpdatePolicyConfig(incoming()) &&
+        isValidTimestamp(incoming().updatedAt) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'checkIntervalMinutes', 'minSupportedVersionCode', 'latestVersionCode',
+          'trustedApkHosts', 'defaultDistributionChannel',
+          'playUpdatePriorityThreshold', 'updatedAt'
+        ]);
+
+      allow delete: if isAdmin() && isValidId(configId);
     }
   }
 }
